@@ -164,7 +164,8 @@ memory_limit_assign(int newval, void *extra)
 		cgroup_free(&cg);
 		ereport(FATAL,
 				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"%s\" from kernel", cg_name)));
+				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
+						cg_name, cgroup_strerror(rc))));
 	}
 
 	if (!(rc = cgroup_set_value_int64(
@@ -201,7 +202,8 @@ memory_limit_show(void)
 		cgroup_free(&cg);
 		ereport(FATAL,
 				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"%s\" from kernel", cg_name)));
+				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
+						cg_name, cgroup_strerror(rc))));
 	}
 
 	rc = cgroup_get_value_int64(
@@ -227,12 +229,13 @@ void on_exit_callback(int code, Datum arg)
 {
 	struct cgroup *cg;
 
-	/* ignore errors */
+	/* ignore all errors since we cannot report them anyway */
 	if (!(cg = cgroup_new_cgroup(cg_name)))
 		return;
 
-	/* remove the control group, ignore errors */
-	(void) cgroup_delete_cgroup_ext(cg, CGFLAG_DELETE_RECURSIVE);
+	(void) cgroup_get_cgroup(cg);
+
+	(void) cgroup_delete_cgroup(cg, 0);
 
 	cgroup_free(&cg);
 }
