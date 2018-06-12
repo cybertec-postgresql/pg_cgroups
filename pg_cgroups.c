@@ -25,6 +25,8 @@ static int memory_limit = -1;
 extern void _PG_init(void);
 
 /* static functions declarations */
+static int64_t cg_get_int64(char * const controller, char * const property);
+static void cg_set_int64(char * const controller, char * const property, int64_t value);
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
 static void memory_limit_assign(int newval, void *extra);
 static const char *memory_limit_show(void);
@@ -137,18 +139,45 @@ _PG_init(void)
 	cgroup_free(&cg);
 }
 
-bool
-memory_limit_check(int *newval, void **extra, GucSource source)
+int64_t cg_get_int64(char * const controller, char * const property)
 {
-	if (*newval == 0)
+	int rc;
+	int64_t value;
+	struct cgroup *cg;
+
+	if (!(cg = cgroup_new_cgroup(cg_name)))
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
+
+	if ((rc = cgroup_get_cgroup(cg)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
+						cg_name, cgroup_strerror(rc))));
+	}
+
+	if ((rc = cgroup_get_value_int64(
+				cgroup_get_controller(cg, controller),
+				property,
+				&value
+			)))
+	{
+		cgroup_free(&cg);
 		ereport(ERROR,
-				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("parameter \"pg_cgroups.memory_limit\" must be -1 or positive")));
-	return true;
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot get \"%s\" for cgroup \"%s\": %s",
+						property, cg_name, cgroup_strerror(rc))));
+	}
+
+	cgroup_free(&cg);
+
+	return value;
 }
 
-void
-memory_limit_assign(int newval, void *extra)
+void cg_set_int64(char * const controller, char * const property, int64_t value)
 {
 	int rc;
 	struct cgroup *cg;
@@ -168,16 +197,16 @@ memory_limit_assign(int newval, void *extra)
 	}
 
 	if ((rc = cgroup_set_value_int64(
-					cgroup_get_controller(cg, "memory"),
-					"memory.limit_in_bytes",
-					(newval == -1) ? -1 : newval * (int64_t)1048576
+					cgroup_get_controller(cg, controller),
+					property,
+					value
 			)))
 	{
 		cgroup_free(&cg);
 		ereport(FATAL,
 				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set \"memory.limit_in_bytes\" for cgroup \"%s\": %s",
-						cg_name, cgroup_strerror(rc))));
+				 errmsg("cannot set \"%s\" for cgroup \"%s\": %s",
+						property, cg_name, cgroup_strerror(rc))));
 	}
 
 	if ((rc = cgroup_modify_cgroup(cg)))
@@ -192,46 +221,39 @@ memory_limit_assign(int newval, void *extra)
 	cgroup_free(&cg);
 }
 
+bool
+memory_limit_check(int *newval, void **extra, GucSource source)
+{
+	if (*newval == 0)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("parameter \"pg_cgroups.memory_limit\" must be -1 or positive")));
+	return true;
+}
+
+void
+memory_limit_assign(int newval, void *extra)
+{
+	int64_t value;
+
+	/* convert from MB to bytes */
+	value = (newval == -1) ? -1 : newval * (int64_t)1048576;
+
+	cg_set_int64("memory", "memory.limit_in_bytes", value);
+}
+
 const char *
 memory_limit_show(void)
 {
-	int rc;
-	int64_t limit;
-	static char limit_str[100];
-	struct cgroup *cg;
+	int64_t value;
+	static char value_str[100];
 
-	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
+	value = cg_get_int64("memory", "memory.limit_in_bytes");
 
-	if ((rc = cgroup_get_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	if ((rc = cgroup_get_value_int64(
-				cgroup_get_controller(cg, "memory"),
-				"memory.limit_in_bytes",
-				&limit
-			)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot get \"memory.limit_in_bytes\" for cgroup \"%s\": %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	cgroup_free(&cg);
-
-	memory_limit = (int)((limit == -1) ? -1 : (limit - 1) / 1048576 + 1);
-	snprintf(limit_str, 100, "%d", memory_limit);
-	return limit_str;
+	/* convert from bytes to MB */
+	memory_limit = (int) ((value == -1) ? -1 : (value - 1) / 1048576 + 1);
+	snprintf(value_str, 100, "%d", memory_limit);
+	return value_str;
 }
 
 void on_exit_callback(int code, Datum arg)
