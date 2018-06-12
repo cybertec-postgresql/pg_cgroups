@@ -52,18 +52,17 @@ _PG_init(void)
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot initialize cgroups library: %s", cgroup_strerror(rc))));
 
-	/*
-	 * Create a cgroup for this cluster.
-	 * First, we have to create an object that represents the group
-	 * that we want to create.
-	 */
+	/* our new cgroup will be called "/postgres/<pid>" */
 	pid = getpid();
 	snprintf(cg_name, 100, "/postgres/%d", pid);
 
+	/* create a cgroup structure in memory */
 	if (!(cg = cgroup_new_cgroup(cg_name)))
 		ereport(FATAL,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
+
+	/* add the controllers we want */
 	if (!(cg_memory = cgroup_add_controller(cg, "memory")))
 	{
 		cgroup_free(&cg);
@@ -168,20 +167,29 @@ memory_limit_assign(int newval, void *extra)
 						cg_name, cgroup_strerror(rc))));
 	}
 
-	if (!(rc = cgroup_set_value_int64(
+	if ((rc = cgroup_set_value_int64(
 					cgroup_get_controller(cg, "memory"),
 					"memory.limit_in_bytes",
 					(newval == -1) ? -1 : newval * (int64_t)1048576
 			)))
-		rc = cgroup_modify_cgroup(cg);
-
-	cgroup_free(&cg);
-
-	if (rc)
-		ereport(ERROR,
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot set \"memory.limit_in_bytes\" for cgroup \"%s\": %s",
 						cg_name, cgroup_strerror(rc))));
+	}
+
+	if ((rc = cgroup_modify_cgroup(cg)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot modify cgroup \"%s\": %s",
+						cg_name, cgroup_strerror(rc))));
+	}
+
+	cgroup_free(&cg);
 }
 
 const char *
@@ -206,21 +214,22 @@ memory_limit_show(void)
 						cg_name, cgroup_strerror(rc))));
 	}
 
-	rc = cgroup_get_value_int64(
+	if ((rc = cgroup_get_value_int64(
 				cgroup_get_controller(cg, "memory"),
 				"memory.limit_in_bytes",
 				&limit
-			);
-
-	cgroup_free(&cg);
-
-	if (rc)
+			)))
+	{
+		cgroup_free(&cg);
 		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot get \"memory.limit_in_bytes\" for cgroup \"%s\": %s",
 						cg_name, cgroup_strerror(rc))));
+	}
 
-	memory_limit = (int)((limit = -1) ? -1 : (limit - 1) / 1048576 + 1);
+	cgroup_free(&cg);
+
+	memory_limit = (int)((limit == -1) ? -1 : (limit - 1) / 1048576 + 1);
 	snprintf(limit_str, 100, "%d", memory_limit);
 	return limit_str;
 }
