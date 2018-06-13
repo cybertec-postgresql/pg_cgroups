@@ -28,8 +28,7 @@ static int memory_limit = -1;
 extern void _PG_init(void);
 
 /* static functions declarations */
-static char * const get_online_cpus(void);
-static char * const get_online_nodes(void);
+static char * const get_online(char * const what);
 static int64_t cg_get_int64(char * const controller, char * const property);
 static void cg_set_int64(char * const controller, char * const property, int64_t value);
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
@@ -58,6 +57,66 @@ _PG_init(void)
 		ereport(FATAL,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot initialize cgroups library: %s", cgroup_strerror(rc))));
+
+	/*
+	 * Before we create our new cgroup, we have to set some required properties on the
+	 * (hopefully) existing "/postgres" cgroup.  We could require the user to add them
+	 * to /etc/cgconfig.conf, but it seems more robust and user-friendly to set them
+	 * ourselves.
+	 * Moreover, this is a good test if the "/postgres" cgroup has been set up correctly.
+	 */
+	if (!(cg = cgroup_new_cgroup("/postgres")))
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot create struct cgroup \"/postgres\"")));
+
+	if ((rc = cgroup_get_cgroup(cg)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot read cgroup \"/postgres\" from kernel"),
+				 errdetail("system error: %s", cgroup_strerror(rc)),
+				 errhint("Configure the \"/postgres\" cgroup properly before starting the server.")));
+	}
+
+	/* set "cpuset.cpus" and "cpuset.cpus" to good defaults */
+	if ((rc = cgroup_set_value_string(
+					cgroup_get_controller(cg, "cpuset"),
+					"cpuset.cpus",
+					get_online("cpu")
+		)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot set property \"cpuset.cpus\" for cpuset controller in cgroup \"/postgres\"")));
+	}
+
+	if ((rc = cgroup_set_value_string(
+					cgroup_get_controller(cg, "cpuset"),
+					"cpuset.mems",
+					get_online("node")
+		)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot set property \"cpuset.mems\" for cpuset controller in cgroup \"/postgres\"")));
+	}
+
+	/* update the cgroup "/postgres" in the kernel */
+	if ((rc = cgroup_modify_cgroup(cg)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot modify cgroup \"/postgres\""),
+				 errdetail("system error: %s", cgroup_strerror(rc)),
+				 errhint("Configure the permissions of the \"/postgres\" cgroup properly before starting the server.")));
+	}
+
+	cgroup_free(&cg);
 
 	/* our new cgroup will be called "/postgres/<pid>" */
 	pid = getpid();
@@ -99,11 +158,11 @@ _PG_init(void)
 				 errmsg("cannot add cpuset controller to cgroup \"%s\"", cg_name)));
 	}
 
-	/* we must set reasonable properties for certain parameters */
+	/* set "cpuset.cpus" and "cpuset.cpus" to good defaults */
 	if ((rc = cgroup_add_value_string(
 					cg_cpuset,
 					"cpuset.cpus",
-					get_online_cpus()
+					get_online("cpu")
 		)))
 	{
 		cgroup_free(&cg);
@@ -116,7 +175,7 @@ _PG_init(void)
 	if ((rc = cgroup_add_value_string(
 					cg_cpuset,
 					"cpuset.mems",
-					get_online_nodes()
+					get_online("node")
 		)))
 	{
 		cgroup_free(&cg);
@@ -142,7 +201,7 @@ _PG_init(void)
 	on_proc_exit(&on_exit_callback, PointerGetDatum(NULL));
 
 	/* actually create the control group */
-	if ((rc = cgroup_create_cgroup(cg, false)))
+	if ((rc = cgroup_create_cgroup(cg, 0)))
 	{
 		cgroup_free(&cg);
 		ereport(FATAL,
@@ -181,66 +240,36 @@ _PG_init(void)
 	cgroup_free(&cg);
 }
 
-#define CPUFILE "/sys/devices/system/cpu/online"
-
 /*
- * Get the online CPUs from the kernel.
+ * Get "online" parameters from the kernel.
+ * "what" can be "cpu" or "node".
  */
-char * const get_online_cpus(void)
+char * const get_online(char * const what)
 {
-	static char cpus[100];
+	static char value[100], path[100];
 	int fd;
 	ssize_t count;
 
+	snprintf(path, 100, "/sys/devices/system/%s/online", what);
+
 	errno = 0;
-	if ((fd = open(CPUFILE, O_RDONLY)) == -1)
+	if ((fd = open(path, O_RDONLY)) == -1)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot open \"%s\": %m", CPUFILE)));
+				 errmsg("cannot open \"%s\": %m", path)));
 
-	if ((count = read(fd, cpus, 99)) == -1)
+	if ((count = read(fd, value, 99)) == -1)
 	{
 		(void) close(fd);
 		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read from \"%s\": %m", CPUFILE)));
+				 errmsg("cannot read from \"%s\": %m", path)));
 	}
 
 	(void) close(fd);
 
-	cpus[(int)count] = '\0';
-	return cpus;
-}
-
-#define NODEFILE "/sys/devices/system/node/online"
-
-/*
- * Get the online NUMA nodes from the kernel.
- */
-char * const get_online_nodes(void)
-{
-	static char nodes[100];
-	int fd;
-	ssize_t count;
-
-	errno = 0;
-	if ((fd = open(NODEFILE, O_RDONLY)) == -1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot open \"%s\": %m", NODEFILE)));
-
-	if ((count = read(fd, nodes, 99)) == -1)
-	{
-		(void) close(fd);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read from \"%s\": %m", NODEFILE)));
-	}
-
-	(void) close(fd);
-
-	nodes[(int)count] = '\0';
-	return nodes;
+	value[(int)count] = '\0';
+	return value;
 }
 
 /*
