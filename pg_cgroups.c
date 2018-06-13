@@ -5,11 +5,14 @@
 #include "postgres.h"
 #include "fmgr.h"
 
+#include <fcntl.h>
+#include <errno.h>
 #include <libcgroup.h>
 #include <limits.h>
+#include <stdio.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <stdio.h>
 
 #include "miscadmin.h"
 #include "storage/ipc.h"
@@ -25,6 +28,8 @@ static int memory_limit = -1;
 extern void _PG_init(void);
 
 /* static functions declarations */
+static char * const get_online_cpus(void);
+static char * const get_online_nodes(void);
 static int64_t cg_get_int64(char * const controller, char * const property);
 static void cg_set_int64(char * const controller, char * const property, int64_t value);
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
@@ -94,6 +99,33 @@ _PG_init(void)
 				 errmsg("cannot add cpuset controller to cgroup \"%s\"", cg_name)));
 	}
 
+	/* we must set reasonable properties for certain parameters */
+	if ((rc = cgroup_add_value_string(
+					cg_cpuset,
+					"cpuset.cpus",
+					get_online_cpus()
+		)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot set property \"cpuset.cpus\" for cpuset controller in cgroup \"%s\"",
+						cg_name)));
+	}
+
+	if ((rc = cgroup_add_value_string(
+					cg_cpuset,
+					"cpuset.mems",
+					get_online_nodes()
+		)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot set property \"cpuset.mems\" for cpuset controller in cgroup \"%s\"",
+						cg_name)));
+	}
+
 	/* set permissions to the current uid and gid */
 	if ((rc = cgroup_set_uid_gid(cg, getuid(), getgid(), getuid(), getgid())))
 	{
@@ -106,6 +138,9 @@ _PG_init(void)
 
 	cgroup_set_permissions(cg, 0755, 0644, 0644);
 
+	/* add an atexit callback that will try to remove the cgroup */
+	on_proc_exit(&on_exit_callback, PointerGetDatum(NULL));
+
 	/* actually create the control group */
 	if ((rc = cgroup_create_cgroup(cg, false)))
 	{
@@ -115,8 +150,15 @@ _PG_init(void)
 				 errmsg("error creating cgroup \"%s\": %s", cg_name, cgroup_strerror(rc))));
 	}
 
-	/* add an atexit callback that will remove the cgroup */
-	on_proc_exit(&on_exit_callback, PointerGetDatum(NULL));
+	/* move the postmaster to the cgroup */
+	if ((rc = cgroup_attach_task_pid(cg, pid)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot move process %d to cgroup \"%s\": %s",
+						pid, cg_name, cgroup_strerror(rc))));
+	}
 
 	/* once the control group is set up, we can define the GUCs */
 	DefineCustomIntVariable(
@@ -126,7 +168,7 @@ _PG_init(void)
 		&memory_limit,
 		-1,
 		-1,
-		INT_MAX / 2,
+		INT_MAX,
 		PGC_SIGHUP,
 		GUC_UNIT_MB,
 		memory_limit_check,
@@ -139,6 +181,71 @@ _PG_init(void)
 	cgroup_free(&cg);
 }
 
+#define CPUFILE "/sys/devices/system/cpu/online"
+
+/*
+ * Get the online CPUs from the kernel.
+ */
+char * const get_online_cpus(void)
+{
+	static char cpus[100];
+	int fd;
+	ssize_t count;
+
+	errno = 0;
+	if ((fd = open(CPUFILE, O_RDONLY)) == -1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot open \"%s\": %m", CPUFILE)));
+
+	if ((count = read(fd, cpus, 99)) == -1)
+	{
+		(void) close(fd);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot read from \"%s\": %m", CPUFILE)));
+	}
+
+	(void) close(fd);
+
+	cpus[(int)count] = '\0';
+	return cpus;
+}
+
+#define NODEFILE "/sys/devices/system/node/online"
+
+/*
+ * Get the online NUMA nodes from the kernel.
+ */
+char * const get_online_nodes(void)
+{
+	static char nodes[100];
+	int fd;
+	ssize_t count;
+
+	errno = 0;
+	if ((fd = open(NODEFILE, O_RDONLY)) == -1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot open \"%s\": %m", NODEFILE)));
+
+	if ((count = read(fd, nodes, 99)) == -1)
+	{
+		(void) close(fd);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot read from \"%s\": %m", NODEFILE)));
+	}
+
+	(void) close(fd);
+
+	nodes[(int)count] = '\0';
+	return nodes;
+}
+
+/*
+ * Read a 64-bit integer property from a kernel cgroup.
+ */
 int64_t cg_get_int64(char * const controller, char * const property)
 {
 	int rc;
@@ -177,6 +284,9 @@ int64_t cg_get_int64(char * const controller, char * const property)
 	return value;
 }
 
+/*
+ * Write a 64-bit integer property to a kernel cgroup.
+ */
 void cg_set_int64(char * const controller, char * const property, int64_t value)
 {
 	int rc;
