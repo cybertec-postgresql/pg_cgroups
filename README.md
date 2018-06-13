@@ -7,8 +7,26 @@ configuration parameters.
 
 This enables you to limit the operating system resources for the cluster.
 
-Installation and Setup
-======================
+Installation
+============
+
+Make sure that you have the PostgreSQL headers and the extension
+building infrastructure installed.  If you do not build PostgreSQL
+from source, this is done by installing a `*-devel` or `*-dev`
+package.
+
+Check that the correct `pg_config` is found on the `PATH`.  
+Then build and install `pg_cgroups` with
+
+    make
+    sudo make install
+
+Then you must add `pg_cgroups` to `shared_preload_libraries` and restart
+the PostgreSQL server process, but make sure that you have completed the
+setup as described below, or PostgreSQL will not start.
+
+Setup
+=====
 
 As user `root`, create the file `/etc/cgconfig.conf` with the following
 content:
@@ -51,19 +69,10 @@ On RedHat-based systems, you would do the following:
     systemctl enable cgconfig
     systemctl start cgconfig
 
-Make sure that you have the PostgreSQL headers and the extension
-building infrastructure installed.  If you do not build PostgreSQL
-from source, this is done by installing a `*-devel` or `*-dev`
-package.
-
-Make sure that the correct `pg_config` is found on the `PATH`.
-Then build and install `pg_cgroups` with
-
-    make
-    sudo make install
-
-Then you must add `pg_cgroups` to `shared_preload_libraries` and restart
-the PostgreSQL server process.
+If PostgreSQL is automatically started during system startup, make sure
+that cgroups are configured before PostgreSQL is started.
+With `systemd`, you can do that by adding an `After` and a `Requires`
+option to the `[Unit]` section of the PostgreSQL service file.
 
 Usage
 =====
