@@ -306,14 +306,14 @@ int64_t cg_get_int64(char * const controller, char * const property)
 	struct cgroup *cg;
 
 	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(FATAL,
+		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
 
 	if ((rc = cgroup_get_cgroup(cg)))
 	{
 		cgroup_free(&cg);
-		ereport(FATAL,
+		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
 						cg_name, cgroup_strerror(rc))));
@@ -346,14 +346,14 @@ void cg_set_int64(char * const controller, char * const property, int64_t value)
 	struct cgroup *cg;
 
 	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(FATAL,
+		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
 
 	if ((rc = cgroup_get_cgroup(cg)))
 	{
 		cgroup_free(&cg);
-		ereport(FATAL,
+		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
 						cg_name, cgroup_strerror(rc))));
@@ -366,7 +366,7 @@ void cg_set_int64(char * const controller, char * const property, int64_t value)
 			)))
 	{
 		cgroup_free(&cg);
-		ereport(FATAL,
+		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot set \"%s\" for cgroup \"%s\": %s",
 						property, cg_name, cgroup_strerror(rc))));
@@ -375,7 +375,7 @@ void cg_set_int64(char * const controller, char * const property, int64_t value)
 	if ((rc = cgroup_modify_cgroup(cg)))
 	{
 		cgroup_free(&cg);
-		ereport(FATAL,
+		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
 				 errmsg("cannot modify cgroup \"%s\": %s",
 						cg_name, cgroup_strerror(rc))));
