@@ -18,6 +18,7 @@
 
 # Regression test results
 results
+regression.*
 
 # dependency tracking
 .deps
