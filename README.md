@@ -94,10 +94,22 @@ the following parameters in `postgresql.conf` are with `ALTER SYSTEM`:
 
 - `pg_cgroups.memory_limit` (`integer`, unit MB, default value -1)
 
-   This corresponds to the cgroup memory parameter
-   `memory.limit_in_bytes` and limits the amount of RAM available.
+  This corresponds to the cgroup memory parameter
+  `memory.limit_in_bytes` and limits the amount of RAM available.
 
-   The parameter can be positive or -1 for "no limit".
+  The parameter can be positive or -1 for "no limit".
 
-   If the memory limit is reached, the Linux out-of-memory killer will
-   terminate PostgreSQL backend processes, which will crash the database.
+  Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
+  parameter determines what will happen.
+
+- `pg_cgroups.swap_limit` (`integer`, unit MB, default value -1)
+
+  This configures the cgroup memory parameter `memory.memsw.limit_in_bytes`
+  and limits the available swap space
+  (note, however, that while `memory.memsw.limit_in_bytes` limits the sum of
+  memory and swap space, `pg_cgroups.swap_limit` limits *only* the swap space).
+
+  This parameter can be 0, positive or -1 for "no limit".
+
+  Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
+  parameter determines what will happen.
