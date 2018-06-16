@@ -1,0 +1,183 @@
+-- check the default settings (should both be -1)
+SHOW pg_cgroups.memory_limit;
+ pg_cgroups.memory_limit 
+-------------------------
+ -1
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ -1
+(1 row)
+
+-- change swap_limit (expect no effect, because there is no memory limit)
+ALTER SYSTEM SET pg_cgroups.swap_limit = 512;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ -1
+(1 row)
+
+-- change only memory limit (should work)
+ALTER SYSTEM SET pg_cgroups.memory_limit = 1024;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.memory_limit;
+ pg_cgroups.memory_limit 
+-------------------------
+ 1024
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ 512
+(1 row)
+
+-- change swap_limit (should work)
+ALTER SYSTEM SET pg_cgroups.swap_limit = 0;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ 0
+(1 row)
+
+-- lower memory limit (should work)
+ALTER SYSTEM SET pg_cgroups.memory_limit = 256;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.memory_limit;
+ pg_cgroups.memory_limit 
+-------------------------
+ 256
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ 0
+(1 row)
+
+-- raise memory limit (should work)
+ALTER SYSTEM SET pg_cgroups.memory_limit = 512;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.memory_limit;
+ pg_cgroups.memory_limit 
+-------------------------
+ 512
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ 0
+(1 row)
+
+-- set swap limit to -1 (should work)
+ALTER SYSTEM SET pg_cgroups.swap_limit = -1;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ -1
+(1 row)
+
+-- set swap limit to 0 (should work)
+ALTER SYSTEM SET pg_cgroups.swap_limit = 0;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ 0
+(1 row)
+
+-- set memory limit to 0 (should fail)
+ALTER SYSTEM SET pg_cgroups.memory_limit = 0;
+ERROR:  parameter "pg_cgroups.memory_limit" must be -1 or positive
+-- reset all settings
+ALTER SYSTEM RESET pg_cgroups.memory_limit;
+ALTER SYSTEM RESET pg_cgroups.swap_limit;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+

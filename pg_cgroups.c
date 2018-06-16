@@ -415,7 +415,7 @@ memory_limit_check(int *newval, void **extra, GucSource source)
 void
 memory_limit_assign(int newval, void *extra)
 {
-	int64_t mem_value, swap_value;
+	int64_t mem_value, swap_value, newtotal;
 
 	/* we have to adjust both memory and swap limit, so get both */
 	get_current_memory_limits();
@@ -424,18 +424,16 @@ memory_limit_assign(int newval, void *extra)
 	mem_value = (newval == -1) ? -1 : newval * (int64_t)1048576;
 
 	/* calculate the new value for swap_limit */
-	if (newval == -1)
-		swap_limit = -1;
+	if (newval == -1 || swap_limit == -1)
+		newtotal = -1;
 	else
-		if (swap_limit != -1)
-			swap_limit += newval - memory_limit;
-	if (swap_limit > INT_MAX / 2)
-		swap_limit = -1;
+		newtotal = (int64_t) swap_limit + newval;
 
 	/* convert from MB to bytes */
-	swap_value = (swap_limit == -1) ? -1 : swap_limit * (int64_t)1048576;
+	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
-	if (newval > memory_limit)
+	if (newval == -1
+		|| (newval > memory_limit && memory_limit != -1))
 	{
 		/* we have to raise the limit on memory + swap first */
 		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
@@ -443,12 +441,11 @@ memory_limit_assign(int newval, void *extra)
 	}
 	else
 	{
-		/* we have to raise the limit on memory + swap last */
+		/* we have to lower the limit on memory + swap last */
 		cg_set_int64("memory", "memory.limit_in_bytes", mem_value);
 		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
 	}
 
-	/* this is not strictly necessary since we always fetch the values anyway */
 	memory_limit = newval;
 }
 
@@ -466,25 +463,24 @@ memory_limit_show(void)
 void
 swap_limit_assign(int newval, void *extra)
 {
-	int64_t swap_value;
-	int newtotal;
+	int64_t swap_value, newtotal;
 
 	get_current_memory_limits();
 
 	/* calculate the new memory + swap */
 	if (memory_limit == -1 || newval == -1)
+	{
 		newtotal = -1;
+		newval = -1;
+	}
 	else
-		newtotal = newval + memory_limit;
-	if (newtotal > INT_MAX / 2)
-		newtotal = -1;
+		newtotal = (int64_t) newval + memory_limit;
 
 	/* convert from MB to bytes */
-	swap_value = (newtotal == -1) ? -1 : newtotal * (int64_t)1048576;
+	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
 	cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
 
-	/* this is not strictly necessary since we always fetch the values anyway */
 	swap_limit = newval;
 }
 
