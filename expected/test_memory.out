@@ -171,7 +171,7 @@ SHOW pg_cgroups.swap_limit;
 
 -- set memory limit to 0 (should fail)
 ALTER SYSTEM SET pg_cgroups.memory_limit = 0;
-ERROR:  parameter "pg_cgroups.memory_limit" must be -1 or positive
+ERROR:  invalid value for parameter "pg_cgroups.memory_limit": 0
 -- reset all settings
 ALTER SYSTEM RESET pg_cgroups.memory_limit;
 ALTER SYSTEM RESET pg_cgroups.swap_limit;
