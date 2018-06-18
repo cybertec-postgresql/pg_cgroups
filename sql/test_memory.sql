@@ -54,3 +54,6 @@ ALTER SYSTEM SET pg_cgroups.memory_limit = 0;
 ALTER SYSTEM RESET pg_cgroups.memory_limit;
 ALTER SYSTEM RESET pg_cgroups.swap_limit;
 SELECT pg_reload_conf();
+SELECT pg_sleep_for('0.3');
+SHOW pg_cgroups.memory_limit;
+SHOW pg_cgroups.swap_limit;

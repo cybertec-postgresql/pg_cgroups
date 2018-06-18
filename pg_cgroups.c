@@ -39,8 +39,9 @@ static int64_t cg_get_int64(char * const controller, char * const property);
 static void cg_set_int64(char * const controller, char * const property, int64_t value);
 static void get_current_memory_limits(void);
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
+static void memory_limit_assign(int newval, void *extra);
 static const char *memory_limit_show(void);
-static bool swap_limit_check(int *newval, void **extra, GucSource source);
+static void swap_limit_assign(int newval, void *extra);
 static const char *swap_limit_show(void);
 static void on_exit_callback(int code, Datum arg);
 
@@ -239,7 +240,7 @@ _PG_init(void)
 		PGC_SIGHUP,
 		GUC_UNIT_MB,
 		memory_limit_check,
-		NULL,
+		memory_limit_assign,
 		memory_limit_show
 	);
 
@@ -253,8 +254,8 @@ _PG_init(void)
 		INT_MAX / 2,
 		PGC_SIGHUP,
 		GUC_UNIT_MB,
-		swap_limit_check,
 		NULL,
+		swap_limit_assign,
 		swap_limit_show
 	);
 
@@ -404,28 +405,31 @@ get_current_memory_limits(void)
 bool
 memory_limit_check(int *newval, void **extra, GucSource source)
 {
-	int64_t mem_value, swap_value, newtotal;
+	return (bool) (*newval != 0);
+}
 
-	if (*newval == 0)
-		return false;
+void
+memory_limit_assign(int newval, void *extra)
+{
+	int64_t mem_value, swap_value, newtotal;
 
 	/* we have to adjust both memory and swap limit, so get both */
 	get_current_memory_limits();
 
 	/* convert from MB to bytes */
-	mem_value = (*newval == -1) ? -1 : *newval * (int64_t)1048576;
+	mem_value = (newval == -1) ? -1 : newval * (int64_t)1048576;
 
 	/* calculate the new value for swap_limit */
-	if (*newval == -1 || swap_limit == -1)
+	if (newval == -1 || swap_limit == -1)
 		newtotal = -1;
 	else
-		newtotal = (int64_t) swap_limit + *newval;
+		newtotal = (int64_t) swap_limit + newval;
 
 	/* convert from MB to bytes */
 	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
-	if (*newval == -1
-		|| (*newval > memory_limit && memory_limit != -1))
+	if (newval == -1
+		|| (newval > memory_limit && memory_limit != -1))
 	{
 		/* we have to raise the limit on memory + swap first */
 		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
@@ -438,7 +442,7 @@ memory_limit_check(int *newval, void **extra, GucSource source)
 		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
 	}
 
-	return true;
+	memory_limit = newval;
 }
 
 const char *
@@ -452,28 +456,28 @@ memory_limit_show(void)
 	return value_str;
 }
 
-bool
-swap_limit_check(int *newval, void **extra, GucSource source)
+void
+swap_limit_assign(int newval, void *extra)
 {
 	int64_t swap_value, newtotal;
 
 	get_current_memory_limits();
 
 	/* calculate the new memory + swap */
-	if (memory_limit == -1 || *newval == -1)
+	if (memory_limit == -1 || newval == -1)
 	{
 		newtotal = -1;
-		*newval = -1;
+		newval = -1;
 	}
 	else
-		newtotal = (int64_t) *newval + memory_limit;
+		newtotal = (int64_t) newval + memory_limit;
 
 	/* convert from MB to bytes */
 	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
 	cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
 
-	return true;
+	swap_limit = newval;
 }
 
 const char *

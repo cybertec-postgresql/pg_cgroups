@@ -181,3 +181,21 @@ SELECT pg_reload_conf();
  t
 (1 row)
 
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.memory_limit;
+ pg_cgroups.memory_limit 
+-------------------------
+ -1
+(1 row)
+
+SHOW pg_cgroups.swap_limit;
+ pg_cgroups.swap_limit 
+-----------------------
+ -1
+(1 row)
+
