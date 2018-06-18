@@ -90,7 +90,10 @@ get to run under that cgroup.  The cgroup is deleted when PostgreSQL is
 shut down.
 
 You can configure limits for various operating system resources by setting
-the following parameters in `postgresql.conf` are with `ALTER SYSTEM`:
+the following parameters in `postgresql.conf` are with `ALTER SYSTEM`.
+
+Memory parameters
+-----------------
 
 - `pg_cgroups.memory_limit` (`integer`, unit MB, default value -1)
 
@@ -113,3 +116,10 @@ the following parameters in `postgresql.conf` are with `ALTER SYSTEM`:
 
   Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
   parameter determines what will happen.
+
+- `pg_cgroups.oom_killer` ('boolean`, default value `on`)
+
+  This parameter configures what will happen if the limit on memory and swap
+  space is exhausted.  If set to `on`, the Linux out-of-memory killer will
+  kill PostgreSQL processes, otherwise execution is suspended until some
+  memory is freed (which may never happen).

@@ -29,12 +29,14 @@ static char cg_name[100];
  */
 static int memory_limit = -1;
 static int swap_limit = -1;
+static bool oom_killer = true;
 
 /* exported function declarations */
 extern void _PG_init(void);
 
 /* static functions declarations */
 static char * const get_online(char * const what);
+static char * const cg_get_string(char * const controller, char * const property);
 static int64_t cg_get_int64(char * const controller, char * const property);
 static void cg_set_int64(char * const controller, char * const property, int64_t value);
 static void get_current_memory_limits(void);
@@ -43,6 +45,8 @@ static void memory_limit_assign(int newval, void *extra);
 static const char *memory_limit_show(void);
 static void swap_limit_assign(int newval, void *extra);
 static const char *swap_limit_show(void);
+static void oom_killer_assign(bool newval, void *extra);
+static const char *oom_killer_show(void);
 static void on_exit_callback(int code, Datum arg);
 
 void
@@ -259,6 +263,19 @@ _PG_init(void)
 		swap_limit_show
 	);
 
+	DefineCustomBoolVariable(
+		"pg_cgroups.oom_killer",
+		"Determines how to treat processes that exceed the memory limit.",
+		"This corresponds to the negation of \"memory.oom_control\".",
+		&oom_killer,
+		true,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		oom_killer_assign,
+		oom_killer_show
+	);
+
 	EmitWarningsOnPlaceholders("pg_cgroups");
 
 	cgroup_free(&cg);
@@ -293,6 +310,48 @@ char * const get_online(char * const what)
 	(void) close(fd);
 
 	value[(int)count] = '\0';
+	return value;
+}
+
+/*
+ * Read a string property from a kernel cgroup.
+ * The caller has to free the result.
+ */
+char * const cg_get_string(char * const controller, char * const property)
+{
+	int rc;
+	char *value;
+	struct cgroup *cg;
+
+	if (!(cg = cgroup_new_cgroup(cg_name)))
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
+
+	if ((rc = cgroup_get_cgroup(cg)))
+	{
+		cgroup_free(&cg);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
+						cg_name, cgroup_strerror(rc))));
+	}
+
+	if ((rc = cgroup_get_value_string(
+				cgroup_get_controller(cg, controller),
+				property,
+				&value
+			)))
+	{
+		cgroup_free(&cg);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot get \"%s\" for cgroup \"%s\": %s",
+						property, cg_name, cgroup_strerror(rc))));
+	}
+
+	cgroup_free(&cg);
+
 	return value;
 }
 
@@ -489,6 +548,37 @@ swap_limit_show(void)
 
 	snprintf(value_str, 100, "%d", swap_limit);
 	return value_str;
+}
+
+void
+oom_killer_assign(bool newval, void *extra)
+{
+	int64_t oom_value = !newval;
+
+	cg_set_int64("memory", "memory.oom_control", oom_value);
+
+	oom_killer = newval;
+}
+
+const char *
+oom_killer_show(void)
+{
+	char * const oom_value = cg_get_string("memory", "memory.oom_control");
+	char *pos = strchr(oom_value, ' ');
+
+	if (!pos)
+	{
+		free(oom_value);
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("incorrect value in parameter \"%s\" of cgroup \"%s\"",
+						"memory.oom_control", cg_name)));
+	}
+
+	oom_killer = (pos[1] == '0' && pos[2] == '\n');
+	free(oom_value);
+
+	return oom_killer ? "on" : "off";
 }
 
 void on_exit_callback(int code, Datum arg)

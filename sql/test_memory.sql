@@ -1,6 +1,7 @@
 -- check the default settings (should both be -1)
 SHOW pg_cgroups.memory_limit;
 SHOW pg_cgroups.swap_limit;
+SHOW pg_cgroups.oom_killer;
 
 -- change swap_limit (expect no effect, because there is no memory limit)
 ALTER SYSTEM SET pg_cgroups.swap_limit = 512;
@@ -50,10 +51,18 @@ SHOW pg_cgroups.swap_limit;
 -- set memory limit to 0 (should fail)
 ALTER SYSTEM SET pg_cgroups.memory_limit = 0;
 
+-- disable OOM killer (should work)
+ALTER SYSTEM SET pg_cgroups.oom_killer = off;
+SELECT pg_reload_conf();
+SELECT pg_sleep_for('0.3');
+SHOW pg_cgroups.oom_killer;
+
 -- reset all settings
 ALTER SYSTEM RESET pg_cgroups.memory_limit;
 ALTER SYSTEM RESET pg_cgroups.swap_limit;
+ALTER SYSTEM RESET pg_cgroups.oom_killer;
 SELECT pg_reload_conf();
 SELECT pg_sleep_for('0.3');
 SHOW pg_cgroups.memory_limit;
 SHOW pg_cgroups.swap_limit;
+SHOW pg_cgroups.oom_killer;

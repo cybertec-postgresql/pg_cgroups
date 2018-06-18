@@ -11,6 +11,12 @@ SHOW pg_cgroups.swap_limit;
  -1
 (1 row)
 
+SHOW pg_cgroups.oom_killer;
+ pg_cgroups.oom_killer 
+-----------------------
+ on
+(1 row)
+
 -- change swap_limit (expect no effect, because there is no memory limit)
 ALTER SYSTEM SET pg_cgroups.swap_limit = 512;
 SELECT pg_reload_conf();
@@ -172,9 +178,30 @@ SHOW pg_cgroups.swap_limit;
 -- set memory limit to 0 (should fail)
 ALTER SYSTEM SET pg_cgroups.memory_limit = 0;
 ERROR:  invalid value for parameter "pg_cgroups.memory_limit": 0
+-- disable OOM killer (should work)
+ALTER SYSTEM SET pg_cgroups.oom_killer = off;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.oom_killer;
+ pg_cgroups.oom_killer 
+-----------------------
+ off
+(1 row)
+
 -- reset all settings
 ALTER SYSTEM RESET pg_cgroups.memory_limit;
 ALTER SYSTEM RESET pg_cgroups.swap_limit;
+ALTER SYSTEM RESET pg_cgroups.oom_killer;
 SELECT pg_reload_conf();
  pg_reload_conf 
 ----------------
@@ -197,5 +224,11 @@ SHOW pg_cgroups.swap_limit;
  pg_cgroups.swap_limit 
 -----------------------
  -1
+(1 row)
+
+SHOW pg_cgroups.oom_killer;
+ pg_cgroups.oom_killer 
+-----------------------
+ on
 (1 row)
 
