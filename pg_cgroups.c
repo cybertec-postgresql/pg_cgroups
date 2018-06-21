@@ -40,28 +40,17 @@ extern void _PG_init(void);
 
 /* static functions declarations */
 static char * const get_online(char * const what);
-static char * const cg_get_string(char * const controller, char * const property);
 static void cg_set_string(char * const controller, char * const property, char * const value);
-static int64_t cg_get_int64(char * const controller, char * const property);
 static void cg_set_int64(char * const controller, char * const property, int64_t value);
-static void get_current_memory_limits(void);
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
 static void memory_limit_assign(int newval, void *extra);
-static const char *memory_limit_show(void);
 static void swap_limit_assign(int newval, void *extra);
-static const char *swap_limit_show(void);
 static void oom_killer_assign(bool newval, void *extra);
-static const char *oom_killer_show(void);
-static void device_limit_assign(char **guc, char * const limit_name, char *newval);
-static const char *device_limit_show(char **guc, char * const limit_name);
+static void device_limit_assign(char * const limit_name, char *newval);
 static void read_bps_limit_assign(const char *newval, void *extra);
-static const char *read_bps_limit_show(void);
 static void write_bps_limit_assign(const char *newval, void *extra);
-static const char *write_bps_limit_show(void);
 static void read_iops_limit_assign(const char *newval, void *extra);
-static const char *read_iops_limit_show(void);
 static void write_iops_limit_assign(const char *newval, void *extra);
-static const char *write_iops_limit_show(void);
 static void on_exit_callback(int code, Datum arg);
 
 void
@@ -260,7 +249,7 @@ _PG_init(void)
 		GUC_UNIT_MB,
 		memory_limit_check,
 		memory_limit_assign,
-		memory_limit_show
+		NULL
 	);
 
 	DefineCustomIntVariable(
@@ -275,7 +264,7 @@ _PG_init(void)
 		GUC_UNIT_MB,
 		NULL,
 		swap_limit_assign,
-		swap_limit_show
+		NULL
 	);
 
 	DefineCustomBoolVariable(
@@ -288,7 +277,7 @@ _PG_init(void)
 		0,
 		NULL,
 		oom_killer_assign,
-		oom_killer_show
+		NULL
 	);
 
 	DefineCustomStringVariable(
@@ -296,12 +285,12 @@ _PG_init(void)
 		"Sets the read I/O limit per device in bytes.",
 		"This corresponds to \"blkio.throttle.read_bps_device\".",
 		&read_bps_limit,
-		NULL,
+		"",
 		PGC_SIGHUP,
 		0,
 		NULL,
 		read_bps_limit_assign,
-		read_bps_limit_show
+		NULL
 	);
 
 	DefineCustomStringVariable(
@@ -309,12 +298,12 @@ _PG_init(void)
 		"Sets the write I/O limit per device in bytes.",
 		"This corresponds to \"blkio.throttle.write_bps_device\".",
 		&write_bps_limit,
-		NULL,
+		"",
 		PGC_SIGHUP,
 		0,
 		NULL,
 		write_bps_limit_assign,
-		write_bps_limit_show
+		NULL
 	);
 
 	DefineCustomStringVariable(
@@ -322,12 +311,12 @@ _PG_init(void)
 		"Sets the read I/O limit per device in I/O operations per second.",
 		"This corresponds to \"blkio.throttle.read_iops_device\".",
 		&read_iops_limit,
-		NULL,
+		"",
 		PGC_SIGHUP,
 		0,
 		NULL,
 		read_iops_limit_assign,
-		read_iops_limit_show
+		NULL
 	);
 
 	DefineCustomStringVariable(
@@ -335,12 +324,12 @@ _PG_init(void)
 		"Sets the write I/O limit per device in I/O operations per second.",
 		"This corresponds to \"blkio.throttle.write_iops_device\".",
 		&write_iops_limit,
-		NULL,
+		"",
 		PGC_SIGHUP,
 		0,
 		NULL,
 		write_iops_limit_assign,
-		write_iops_limit_show
+		NULL
 	);
 
 	EmitWarningsOnPlaceholders("pg_cgroups");
@@ -377,73 +366,6 @@ char * const get_online(char * const what)
 	(void) close(fd);
 
 	value[(int)count] = '\0';
-	return value;
-}
-
-/*
- * Read a string property from a kernel cgroup.
- * The caller has to free the result.
- */
-char * const cg_get_string(char * const controller, char * const property)
-{
-	int rc;
-	char *value = NULL;
-	void *handle = NULL;
-	static char buf[100];
-
-	if ((rc = cgroup_read_value_begin(
-				controller,
-				cg_name,
-				property,
-				&handle,
-				buf,
-				100
-			)) != 0 && rc != ECGEOF)
-	{
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot get \"%s\" for cgroup \"%s\": %s",
-						property, cg_name, cgroup_strerror(rc))));
-	}
-
-	while (rc != ECGEOF)
-	{
-		if (value)
-			value = realloc(value, strlen(value) + strlen(buf) + 1);
-		else
-		{
-			value = malloc(strlen(buf) + 1);
-			value[0] = '\0';
-		}
-
-		if (!value)
-		{
-			if (handle)
-				cgroup_read_value_end(&handle);
-
-			ereport(ERROR,
-					(errcode(ERRCODE_SYSTEM_ERROR),
-					 errmsg("out of memory reading \"%s\" for cgroup \"%s\"",
-							property, cg_name)));
-		}
-
-		strcat(value, buf);
-
-		if ((rc = cgroup_read_value_next(&handle, buf, 100)) != 0 && rc != ECGEOF)
-		{
-			if (handle)
-				cgroup_read_value_end(&handle);
-
-			ereport(ERROR,
-					(errcode(ERRCODE_SYSTEM_ERROR),
-					 errmsg("cannot read \"%s\" for cgroup \"%s\": %s",
-							property, cg_name, cgroup_strerror(rc))));
-		}
-	}
-
-	if (handle)
-		cgroup_read_value_end(&handle);
-
 	return value;
 }
 
@@ -495,47 +417,6 @@ void cg_set_string(char * const controller, char * const property, char * const 
 }
 
 /*
- * Read a 64-bit integer property from a kernel cgroup.
- */
-int64_t cg_get_int64(char * const controller, char * const property)
-{
-	int rc;
-	int64_t value;
-	struct cgroup *cg;
-
-	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
-
-	if ((rc = cgroup_get_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	if ((rc = cgroup_get_value_int64(
-				cgroup_get_controller(cg, controller),
-				property,
-				&value
-			)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot get \"%s\" for cgroup \"%s\": %s",
-						property, cg_name, cgroup_strerror(rc))));
-	}
-
-	cgroup_free(&cg);
-
-	return value;
-}
-
-/*
  * Write a 64-bit integer property to a kernel cgroup.
  */
 void cg_set_int64(char * const controller, char * const property, int64_t value)
@@ -582,24 +463,6 @@ void cg_set_int64(char * const controller, char * const property, int64_t value)
 	cgroup_free(&cg);
 }
 
-void
-get_current_memory_limits(void)
-{
-	int64_t mem_value, mem_val_mb, swap_value, swap_val_mb;
-
-	mem_value = cg_get_int64("memory", "memory.limit_in_bytes");
-	swap_value = cg_get_int64("memory", "memory.memsw.limit_in_bytes");
-
-	/* convert from bytes to MB */
-	mem_val_mb = (mem_value == -1) ? -1 : (mem_value - 1) / 1048576 + 1;
-	memory_limit = (int) ((mem_val_mb > INT_MAX / 2) ? -1 : mem_val_mb);
-	swap_val_mb = (swap_value == -1) ? -1 : (swap_value - 1) / 1048576 + 1;
-	swap_limit = (int) ((swap_val_mb > INT_MAX / 2) ? -1 : swap_val_mb);
-
-	if (swap_limit != -1)
-		swap_limit -= memory_limit;
-}
-
 bool
 memory_limit_check(int *newval, void **extra, GucSource source)
 {
@@ -610,9 +473,6 @@ void
 memory_limit_assign(int newval, void *extra)
 {
 	int64_t mem_value, swap_value, newtotal;
-
-	/* we have to adjust both memory and swap limit, so get both */
-	get_current_memory_limits();
 
 	/* convert from MB to bytes */
 	mem_value = (newval == -1) ? -1 : newval * (int64_t)1048576;
@@ -639,27 +499,12 @@ memory_limit_assign(int newval, void *extra)
 		cg_set_int64("memory", "memory.limit_in_bytes", mem_value);
 		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
 	}
-
-	memory_limit = newval;
-}
-
-const char *
-memory_limit_show(void)
-{
-	static char value_str[100];
-
-	get_current_memory_limits();
-
-	snprintf(value_str, 100, "%d", memory_limit);
-	return value_str;
 }
 
 void
 swap_limit_assign(int newval, void *extra)
 {
 	int64_t swap_value, newtotal;
-
-	get_current_memory_limits();
 
 	/* calculate the new memory + swap */
 	if (memory_limit == -1 || newval == -1)
@@ -674,19 +519,6 @@ swap_limit_assign(int newval, void *extra)
 	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
 	cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
-
-	swap_limit = newval;
-}
-
-const char *
-swap_limit_show(void)
-{
-	static char value_str[100];
-
-	get_current_memory_limits();
-
-	snprintf(value_str, 100, "%d", swap_limit);
-	return value_str;
 }
 
 void
@@ -695,128 +527,49 @@ oom_killer_assign(bool newval, void *extra)
 	int64_t oom_value = !newval;
 
 	cg_set_int64("memory", "memory.oom_control", oom_value);
-
-	oom_killer = newval;
-}
-
-const char *
-oom_killer_show(void)
-{
-	char * const oom_value = cg_get_string("memory", "memory.oom_control");
-	char *pos = oom_value ? strchr(oom_value, ' ') : NULL;
-
-	if (!pos)
-	{
-		if (oom_value)
-			free(oom_value);
-
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("incorrect value in parameter \"%s\" of cgroup \"%s\"",
-						"memory.oom_control", cg_name)));
-	}
-
-	oom_killer = (pos[1] == '0' && pos[2] == '\n');
-	free(oom_value);
-
-	return oom_killer ? "on" : "off";
 }
 
 void
-device_limit_assign(char **guc, char * const limit_name, char *newval)
+device_limit_assign(char * const limit_name, char *newval)
 {
 	int i;
 	char *device_limit_val = NULL;
 
-	if (newval)
-	{
-		device_limit_val = pstrdup(newval);
+	device_limit_val = pstrdup(newval ? newval : "");
 
-		/* replace commas with line breaks */
-		if (device_limit_val)
-			for (i=strlen(device_limit_val)-1; i>=0; --i)
-				if (device_limit_val[i] == ',')
-					device_limit_val[i] = '\n';
-	}
-
-	cg_set_string("blkio", limit_name, (device_limit_val ? device_limit_val : ""));
-
+	/* replace commas with line breaks */
 	if (device_limit_val)
-		pfree(device_limit_val);
+		for (i=strlen(device_limit_val)-1; i>=0; --i)
+			if (device_limit_val[i] == ',')
+				device_limit_val[i] = '\n';
 
-	if (*guc)
-		free(*guc);
-	*guc = newval;
-}
+	cg_set_string("blkio", limit_name, device_limit_val);
 
-const char *
-device_limit_show(char **guc, char * const limit_name)
-{
-	char *device_limit_val = cg_get_string("blkio", "blkio.throttle.read_bps_device");
-	int i;
-
-	/* replace line breaks with commas */
-	if (device_limit_val)
-	{
-		for (i=strlen(device_limit_val)-2; i>=0; --i)
-			if (device_limit_val[i] == '\n')
-				device_limit_val[i] = ',';
-		device_limit_val[strlen(device_limit_val)-1] = '\0';
-	}
-
-	if (*guc)
-		free(*guc);
-	*guc = device_limit_val;
-
-	return *guc ? *guc : "";
+	pfree(device_limit_val);
 }
 
 void
 read_bps_limit_assign(const char *newval, void *extra)
 {
-	device_limit_assign(&read_bps_limit, "blkio.throttle.read_bps_device", (char *) newval);
-}
-
-const char *
-read_bps_limit_show(void)
-{
-	return device_limit_show(&read_bps_limit, "blkio.throttle.read_bps_device");
+	device_limit_assign("blkio.throttle.read_bps_device", (char *) newval);
 }
 
 void
 write_bps_limit_assign(const char *newval, void *extra)
 {
-	device_limit_assign(&write_bps_limit, "blkio.throttle.write_bps_device", (char *) newval);
-}
-
-const char *
-write_bps_limit_show(void)
-{
-	return device_limit_show(&write_bps_limit, "blkio.throttle.write_bps_device");
+	device_limit_assign("blkio.throttle.write_bps_device", (char *) newval);
 }
 
 void
 read_iops_limit_assign(const char *newval, void *extra)
 {
-	device_limit_assign(&read_iops_limit, "blkio.throttle.read_iops_device", (char *) newval);
-}
-
-const char *
-read_iops_limit_show(void)
-{
-	return device_limit_show(&read_iops_limit, "blkio.throttle.read_iops_device");
+	device_limit_assign("blkio.throttle.read_iops_device", (char *) newval);
 }
 
 void
 write_iops_limit_assign(const char *newval, void *extra)
 {
-	device_limit_assign(&write_iops_limit, "blkio.throttle.write_iops_device", (char *) newval);
-}
-
-const char *
-write_iops_limit_show(void)
-{
-	return device_limit_show(&write_iops_limit, "blkio.throttle.write_iops_device");
+	device_limit_assign("blkio.throttle.write_iops_device", (char *) newval);
 }
 
 void on_exit_callback(int code, Datum arg)

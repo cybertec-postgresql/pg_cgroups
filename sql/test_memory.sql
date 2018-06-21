@@ -3,13 +3,13 @@ SHOW pg_cgroups.memory_limit;
 SHOW pg_cgroups.swap_limit;
 SHOW pg_cgroups.oom_killer;
 
--- change swap_limit (expect no effect, because there is no memory limit)
+-- change swap_limit (will set the parameter, leave kernel value unlimited)
 ALTER SYSTEM SET pg_cgroups.swap_limit = 512;
 SELECT pg_reload_conf();
 SELECT pg_sleep_for('0.3');
 SHOW pg_cgroups.swap_limit;
 
--- change only memory limit (should work)
+-- change memory limit (should work)
 ALTER SYSTEM SET pg_cgroups.memory_limit = 1024;
 SELECT pg_reload_conf();
 SELECT pg_sleep_for('0.3');

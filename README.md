@@ -90,7 +90,17 @@ get to run under that cgroup.  The cgroup is deleted when PostgreSQL is
 shut down.
 
 You can configure limits for various operating system resources by setting
-the following parameters in `postgresql.conf` are with `ALTER SYSTEM`.
+configuration parameters in `postgresql.conf` or with `ALTER SYSTEM`.
+
+Note that `ALTER SYSTEM ... RESET` will only change the parameters, but
+*not* affect the kernel control group.  Avoid it to keep the parameters
+synchronized with the kernel settings.
+
+You should also avoid modifying the cgroup parameters outside of PostgreSQL.
+This will work, but then the configuration parameters won't contain the
+correct setting.
+
+The parameters are:
 
 Memory parameters
 -----------------
