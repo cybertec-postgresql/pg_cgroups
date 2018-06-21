@@ -117,9 +117,57 @@ Memory parameters
   Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
   parameter determines what will happen.
 
-- `pg_cgroups.oom_killer` ('boolean`, default value `on`)
+- `pg_cgroups.oom_killer` (`boolean`, default value `on`)
 
   This parameter configures what will happen if the limit on memory and swap
   space is exhausted.  If set to `on`, the Linux out-of-memory killer will
   kill PostgreSQL processes, otherwise execution is suspended until some
   memory is freed (which may never happen).
+
+Block-I/O parameters
+--------------------
+
+  For all these parameters, the format of the entries is `major:minor limit`,
+  where `major` and `minor` are the device major and minor numbers,
+  and `limit` is a number (bytes or number of I/O operations).
+
+  To limit I/O on several devices, use several such entries, separated by
+  a comma.
+
+  For example, if I want to limit I/O on the device `/dev/mapper/home`,
+  you first find out what device that actually is:
+
+      $ readlink -e /dev/mapper/home
+      /dev/dm-2
+
+  Then you find out the major and minor numbers:
+
+      $ ls -l /dev/dm-2
+      brw-rw---- 1 root disk 253, 2 Jun 21 12:13 /dev/dm-2
+
+  So in this case, you would use an entry like `253:2 1048576` if you want to
+  limit I/O to 1MB per second.
+
+- `pg_cgroups.pg_cgroups.read_bps_limit` (`text`, default empty)
+
+  This corresponds to the cgroup blkio parameter
+  `blkio.throttle.read_bps_device` and limits the amount of bytes that can
+  be read per second.
+
+- `pg_cgroups.pg_cgroups.write_bps_limit` (`text`, default empty)
+
+  This corresponds to the cgroup blkio parameter
+  `blkio.throttle.write_bps_device` and limits the amount of bytes that can
+  be written per second.
+
+- `pg_cgroups.pg_cgroups.read_iops_limit` (`text`, default empty)
+
+  This corresponds to the cgroup blkio parameter
+  `blkio.throttle.read_iops_device` and limits the number of read I/O
+  operations that can be performed per second.
+
+- `pg_cgroups.pg_cgroups.write_iops_limit` (`text`, default empty)
+
+  This corresponds to the cgroup blkio parameter
+  `blkio.throttle.write_iops_device` and limits the number of write I/O
+  operations that can be performed per second.
