@@ -474,6 +474,10 @@ memory_limit_assign(int newval, void *extra)
 {
 	int64_t mem_value, swap_value, newtotal;
 
+	/* only the pustmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
+
 	/* convert from MB to bytes */
 	mem_value = (newval == -1) ? -1 : newval * (int64_t)1048576;
 
@@ -506,6 +510,10 @@ swap_limit_assign(int newval, void *extra)
 {
 	int64_t swap_value, newtotal;
 
+	/* only the pustmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
+
 	/* calculate the new memory + swap */
 	if (memory_limit == -1 || newval == -1)
 	{
@@ -526,6 +534,10 @@ oom_killer_assign(bool newval, void *extra)
 {
 	int64_t oom_value = !newval;
 
+	/* only the pustmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
+
 	cg_set_int64("memory", "memory.oom_control", oom_value);
 }
 
@@ -534,6 +546,10 @@ device_limit_assign(char * const limit_name, char *newval)
 {
 	int i;
 	char *device_limit_val = NULL;
+
+	/* only the pustmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
 
 	device_limit_val = pstrdup(newval ? newval : "");
 
