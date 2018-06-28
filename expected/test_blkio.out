@@ -1,0 +1,24 @@
+/*
+ * Unfortunately I cannot test everything because I cannot
+ * rely on the existence of a certain block device on
+ * every Linux system.
+ */
+-- try several incorrect settings that should fail
+ALTER SYSTEM SET pg_cgroups.read_bps_limit = '1024';
+ERROR:  invalid value for parameter "pg_cgroups.read_bps_limit": "1024"
+DETAIL:  Entry "1024" must have a space between device and limit.
+ALTER SYSTEM SET pg_cgroups.write_bps_limit = '8:0';
+ERROR:  invalid value for parameter "pg_cgroups.write_bps_limit": "8:0"
+DETAIL:  Entry "8:0" must have a space between device and limit.
+ALTER SYSTEM SET pg_cgroups.read_iops_limit = ':0 9210';
+ERROR:  invalid value for parameter "pg_cgroups.read_iops_limit": ":0 9210"
+DETAIL:  Entry ":0 9210" does not start with "major:minor" device numbers.
+ALTER SYSTEM SET pg_cgroups.write_iops_limit = '100 9210';
+ERROR:  invalid value for parameter "pg_cgroups.write_iops_limit": "100 9210"
+DETAIL:  Entry "100 9210" does not start with "major:minor" device numbers.
+ALTER SYSTEM SET pg_cgroups.read_bps_limit = '100: 9210';
+ERROR:  invalid value for parameter "pg_cgroups.read_bps_limit": "100: 9210"
+DETAIL:  Entry "100: 9210" does not start with "major:minor" device numbers.
+ALTER SYSTEM SET pg_cgroups.write_iops_limit = '1:0 xyz';
+ERROR:  invalid value for parameter "pg_cgroups.write_iops_limit": "1:0 xyz"
+DETAIL:  Limit "xyz" must be an integer number.

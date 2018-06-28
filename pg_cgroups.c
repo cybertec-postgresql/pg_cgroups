@@ -5,8 +5,8 @@
 #include "postgres.h"
 #include "fmgr.h"
 
-#include <fcntl.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <libcgroup.h>
 #include <limits.h>
 #include <stdio.h>
@@ -46,6 +46,7 @@ static bool memory_limit_check(int *newval, void **extra, GucSource source);
 static void memory_limit_assign(int newval, void *extra);
 static void swap_limit_assign(int newval, void *extra);
 static void oom_killer_assign(bool newval, void *extra);
+static bool device_limit_check(char **newval, void **extra, GucSource source);
 static void device_limit_assign(char * const limit_name, char *newval);
 static void read_bps_limit_assign(const char *newval, void *extra);
 static void write_bps_limit_assign(const char *newval, void *extra);
@@ -288,7 +289,7 @@ _PG_init(void)
 		"",
 		PGC_SIGHUP,
 		0,
-		NULL,
+		device_limit_check,
 		read_bps_limit_assign,
 		NULL
 	);
@@ -301,7 +302,7 @@ _PG_init(void)
 		"",
 		PGC_SIGHUP,
 		0,
-		NULL,
+		device_limit_check,
 		write_bps_limit_assign,
 		NULL
 	);
@@ -314,7 +315,7 @@ _PG_init(void)
 		"",
 		PGC_SIGHUP,
 		0,
-		NULL,
+		device_limit_check,
 		read_iops_limit_assign,
 		NULL
 	);
@@ -327,7 +328,7 @@ _PG_init(void)
 		"",
 		PGC_SIGHUP,
 		0,
-		NULL,
+		device_limit_check,
 		write_iops_limit_assign,
 		NULL
 	);
@@ -539,6 +540,131 @@ oom_killer_assign(bool newval, void *extra)
 		return;
 
 	cg_set_int64("memory", "memory.oom_control", oom_value);
+}
+
+bool
+device_limit_check(char **newval, void **extra, GucSource source)
+{
+	char *val = pstrdup(*newval),
+		 *freeme = val;
+
+	if (*val == '\0')
+		return true;
+
+	/* loop through comma-separated list */
+	while (val)
+	{
+		char *nextp, *device, *limit, *filename;
+		bool have_colon = false,
+			 have_digit = false;
+		struct stat statbuf;
+
+		if ((nextp = strchr(val, ',')) != NULL)
+		{
+			*nextp = '\0';
+			++nextp;
+		}
+
+		/* parse entry of the form <major>:<minor> <limit> */
+		device = val;
+		while (*val != ' ')
+		{
+			if (*val >= '0' && *val <= '9')
+				have_digit = true;
+			else if (*val == ':')
+			{
+				if (have_colon || !have_digit)
+				{
+					GUC_check_errdetail(
+						"Entry \"%s\" does not start with \"major:minor\" device numbers.",
+						device
+					);
+					return false;
+				}
+
+				have_colon = true;
+				have_digit = false;
+			}
+			else if (*val == '\0')
+			{
+				GUC_check_errdetail(
+					"Entry \"%s\" must have a space between device and limit.",
+					device
+				);
+				return false;
+			}
+			else
+			{
+				GUC_check_errdetail(
+					"Entry \"%s\" does not start with \"major:minor\" device numbers.",
+					device
+				);
+				return false;
+			}
+
+			++val;
+		}
+		if (!have_colon || !have_digit)
+		{
+			GUC_check_errdetail(
+				"Entry \"%s\" does not start with \"major:minor\" device numbers.",
+				device
+			);
+			return false;
+		}
+
+		*(val++) = '\0';
+		while (*val == ' ')
+			++val;
+		limit = val;
+
+		have_digit = false;
+		while (*val >= '0' && *val <= '9')
+		{
+			have_digit = true;
+			++val;
+		}
+		if (*val != '\0' || !have_digit)
+		{
+			GUC_check_errdetail(
+				"Limit \"%s\" must be an integer number.",
+				limit
+			);
+			return false;
+		}
+
+		/* check if the device exists */
+		filename = palloc(strlen(device) + 12);
+		strcpy(filename, "/dev/block/");
+		strcat(filename, device);
+
+		errno = 0;
+		if (stat(filename, &statbuf))
+		{
+			GUC_check_errdetail(
+				errno == ENOENT ? "Device file \"%s\" does not exist."
+								: "Error accessing device file \"%s\": %m",
+				filename
+			);
+			return false;
+		}
+
+		if ((statbuf.st_mode & S_IFMT) != S_IFBLK)
+		{
+			GUC_check_errdetail(
+				"Device file \"%s\" is not a block device.",
+				filename
+			);
+			return false;
+		}
+
+		pfree(filename);
+
+		val = nextp;
+	}
+
+	pfree(freeme);
+	return true;
 }
 
 void

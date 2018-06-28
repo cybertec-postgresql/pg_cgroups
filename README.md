@@ -92,13 +92,12 @@ shut down.
 You can configure limits for various operating system resources by setting
 configuration parameters in `postgresql.conf` or with `ALTER SYSTEM`.
 
-Note that `ALTER SYSTEM ... RESET` will only change the parameters, but
-*not* affect the kernel control group.  Avoid it to keep the parameters
-synchronized with the kernel settings.
-
 You should also avoid modifying the cgroup parameters outside of PostgreSQL.
 This will work, but then the configuration parameters won't contain the
 correct setting.
+
+`pg_cgroups` tries to check the parameter values for validity, but be careful
+because an incorrect parameter setting will cause PostgreSQL to stop.
 
 The parameters are:
 
@@ -158,25 +157,31 @@ Block-I/O parameters
   So in this case, you would use an entry like `253:2 1048576` if you want to
   limit I/O to 1MB per second.
 
-- `pg_cgroups.pg_cgroups.read_bps_limit` (`text`, default empty)
+  To remove a limit with `ALTER SYSTEM`, you have to set it to 0 explicitly, as in `253:2 0`.
+  Using `ALTER SYSTEM RESET` or setting the limit to an empty string won't
+  change the limit (this is how Linux control groups are implemented).
+  However, setting the limit to an empty string and restarting the server
+  will work, since the cgroup is deleted and re-created in this case.
+
+- `pg_cgroups.read_bps_limit` (`text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.read_bps_device` and limits the amount of bytes that can
   be read per second.
 
-- `pg_cgroups.pg_cgroups.write_bps_limit` (`text`, default empty)
+- `pg_cgroups.write_bps_limit` (`text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.write_bps_device` and limits the amount of bytes that can
   be written per second.
 
-- `pg_cgroups.pg_cgroups.read_iops_limit` (`text`, default empty)
+- `pg_cgroups.read_iops_limit` (`text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.read_iops_device` and limits the number of read I/O
   operations that can be performed per second.
 
-- `pg_cgroups.pg_cgroups.write_iops_limit` (`text`, default empty)
+- `pg_cgroups.write_iops_limit` (`text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.write_iops_device` and limits the number of write I/O
