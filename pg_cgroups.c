@@ -34,6 +34,7 @@ static char *read_bps_limit = NULL;
 static char *write_bps_limit = NULL;
 static char *read_iops_limit = NULL;
 static char *write_iops_limit = NULL;
+static int cpu_share = 100000;
 
 /* exported function declarations */
 extern void _PG_init(void);
@@ -52,6 +53,7 @@ static void read_bps_limit_assign(const char *newval, void *extra);
 static void write_bps_limit_assign(const char *newval, void *extra);
 static void read_iops_limit_assign(const char *newval, void *extra);
 static void write_iops_limit_assign(const char *newval, void *extra);
+static void cpu_share_assign(int newval, void *extra);
 static void on_exit_callback(int code, Datum arg);
 
 void
@@ -203,6 +205,20 @@ _PG_init(void)
 						cg_name)));
 	}
 
+	/* set "cpu.cfs_period_us" to 100000 */
+	if ((rc = cgroup_add_value_int64(
+				cg_cpu,
+				"cpu.cfs_period_us",
+				100000
+		)))
+	{
+		cgroup_free(&cg);
+		ereport(FATAL,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("cannot set property \"cpu.cfs_period_us\" for cpu controller in cgroup \"%s\"",
+						cg_name)));
+	}
+
 	/* set permissions to the current uid and gid */
 	if ((rc = cgroup_set_uid_gid(cg, getuid(), getgid(), getuid(), getgid())))
 	{
@@ -330,6 +346,21 @@ _PG_init(void)
 		0,
 		device_limit_check,
 		write_iops_limit_assign,
+		NULL
+	);
+
+	DefineCustomIntVariable(
+		"pg_cgroups.cpu_share",
+		"Limit percentage of the CPU time available (100000 = 100%).",
+		"This corresponds to \"cpu.cfs_quota_us\".",
+		&cpu_share,
+		100000,
+		1000,
+		100000,
+		PGC_SIGHUP,
+		0,
+		NULL,
+		cpu_share_assign,
 		NULL
 	);
 
@@ -712,6 +743,16 @@ void
 write_iops_limit_assign(const char *newval, void *extra)
 {
 	device_limit_assign("blkio.throttle.write_iops_device", (char *) newval);
+}
+
+void
+cpu_share_assign(int newval, void *extra)
+{
+	/* only the pustmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
+
+	cg_set_int64("cpu", "cpu.cfs_quota_us", (int16_t) newval);
 }
 
 void on_exit_callback(int code, Datum arg)

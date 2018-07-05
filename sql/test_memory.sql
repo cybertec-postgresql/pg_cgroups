@@ -1,4 +1,4 @@
--- check the default settings (should both be -1)
+-- check the default settings
 SHOW pg_cgroups.memory_limit;
 SHOW pg_cgroups.swap_limit;
 SHOW pg_cgroups.oom_killer;

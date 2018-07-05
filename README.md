@@ -157,7 +157,8 @@ Block-I/O parameters
   So in this case, you would use an entry like `253:2 1048576` if you want to
   limit I/O to 1MB per second.
 
-  To remove a limit with `ALTER SYSTEM`, you have to set it to 0 explicitly, as in `253:2 0`.
+  To remove a limit with `ALTER SYSTEM`, you have to set it to 0 explicitly,
+  as in `253:2 0`.
   Using `ALTER SYSTEM RESET` or setting the limit to an empty string won't
   change the limit (this is how Linux control groups are implemented).
   However, setting the limit to an empty string and restarting the server
@@ -186,3 +187,13 @@ Block-I/O parameters
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.write_iops_device` and limits the number of write I/O
   operations that can be performed per second.
+
+CPU parameters
+--------------
+
+- `pg_cgroups.cpu_share` (`integer`, default 100000)
+
+  This corresponds to the cgroup cpu parameter `cpu.cfs_quota_us` and defines
+  the percentage of CPU bandwidth that can be used by PostgreSQL.
+  The unit is 1/1000 of a percent, so the default value 100000 stands for
+  100%.  The minimum value is 1000, which stands for 1%.
