@@ -23,10 +23,7 @@ PG_MODULE_MAGIC;
 /* global variables */
 static char cg_name[100];
 
-/*
- * These GUCs don't hold the authoritative values, those are in the
- * kernel and have to be fetched every time.
- */
+/* GUCs defined by the module */
 static int memory_limit = -1;
 static int swap_limit = -1;
 static bool oom_killer = true;
@@ -35,6 +32,8 @@ static char *write_bps_limit = NULL;
 static char *read_iops_limit = NULL;
 static char *write_iops_limit = NULL;
 static int cpu_share = 100000;
+static char* cpus = NULL;
+static char* memory_nodes = NULL;
 
 /* exported function declarations */
 extern void _PG_init(void);
@@ -54,6 +53,10 @@ static void write_bps_limit_assign(const char *newval, void *extra);
 static void read_iops_limit_assign(const char *newval, void *extra);
 static void write_iops_limit_assign(const char *newval, void *extra);
 static void cpu_share_assign(int newval, void *extra);
+static bool cpus_check(char **newval, void **extra, GucSource source);
+static void cpus_assign(const char *newval, void *extra);
+static bool memory_nodes_check(char **newval, void **extra, GucSource source);
+static void memory_nodes_assign(const char *newval, void *extra);
 static void on_exit_callback(int code, Datum arg);
 
 void
@@ -361,6 +364,32 @@ _PG_init(void)
 		0,
 		NULL,
 		cpu_share_assign,
+		NULL
+	);
+
+	DefineCustomStringVariable(
+		"pg_cgroups.cpus",
+		"Specifies which CPUs are available for this cluster.",
+		"This corresponds to \"cpuset.cpus\".",
+		&cpus,
+		get_online("cpu"),
+		PGC_SIGHUP,
+		0,
+		cpus_check,
+		cpus_assign,
+		NULL
+	);
+
+	DefineCustomStringVariable(
+		"pg_cgroups.memory_nodes",
+		"Specifies which memory nodes are available for this cluster.",
+		"This corresponds to \"cpuset.mems\".",
+		&memory_nodes,
+		get_online("node"),
+		PGC_SIGHUP,
+		0,
+		memory_nodes_check,
+		memory_nodes_assign,
 		NULL
 	);
 
@@ -753,6 +782,28 @@ cpu_share_assign(int newval, void *extra)
 		return;
 
 	cg_set_int64("cpu", "cpu.cfs_quota_us", (int16_t) newval);
+}
+
+bool
+cpus_check(char **newval, void **extra, GucSource source)
+{
+	return true;
+}
+
+void
+cpus_assign(const char *newval, void *extra)
+{
+}
+
+bool
+memory_nodes_check(char **newval, void **extra, GucSource source)
+{
+	return true;
+}
+
+void
+memory_nodes_assign(const char *newval, void *extra)
+{
 }
 
 void on_exit_callback(int code, Datum arg)
