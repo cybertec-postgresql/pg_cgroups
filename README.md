@@ -15,6 +15,9 @@ building infrastructure installed.  If you do not build PostgreSQL
 from source, this is done by installing a `*-devel` or `*-dev`
 package.
 
+Since `pg_cgroups` uses `libcgroup`, you also have to install that library
+and its header files.
+
 Check that the correct `pg_config` is found on the `PATH`.  
 Then build and install `pg_cgroups` with
 
