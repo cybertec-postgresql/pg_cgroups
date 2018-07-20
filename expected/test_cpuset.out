@@ -1,0 +1,102 @@
+-- check the default settings
+SHOW pg_cgroups.cpus;
+ pg_cgroups.cpus 
+-----------------
+ 0-3
+(1 row)
+
+SHOW pg_cgroups.memory_nodes;
+ pg_cgroups.memory_nodes 
+-------------------------
+ 0
+(1 row)
+
+-- test some incorrect settings
+ALTER SYSTEM SET pg_cgroups.cpus = '-1';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": "-1"
+DETAIL:  Value "-1" has "-" in an invalid place.
+ALTER SYSTEM SET pg_cgroups.cpus = '0-0-0';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": "0-0-0"
+DETAIL:  Value "0-0-0" has "-" in an invalid place.
+ALTER SYSTEM SET pg_cgroups.cpus = '0,1,1-0';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": "0,1,1-0"
+DETAIL:  Number 0 is outside of range 1-3.
+ALTER SYSTEM SET pg_cgroups.cpus = '10000';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": "10000"
+DETAIL:  Number 10000 is outside of range 0-3.
+ALTER SYSTEM SET pg_cgroups.cpus = '1000000';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": "1000000"
+DETAIL:  Value "1000000" contains an invalid number.
+ALTER SYSTEM SET pg_cgroups.cpus = ',1';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": ",1"
+DETAIL:  Value ",1" is missing a number before ",".
+ALTER SYSTEM SET pg_cgroups.cpus = '0-1,';
+ERROR:  invalid value for parameter "pg_cgroups.cpus": "0-1,"
+DETAIL:  Value "0-1," does not end with a number.
+-- set the available CPUs
+ALTER SYSTEM SET pg_cgroups.cpus = '0';
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.cpus;
+ pg_cgroups.cpus 
+-----------------
+ 0
+(1 row)
+
+-- set the available memory nodes
+ALTER SYSTEM SET pg_cgroups.memory_nodes = '0';
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.memory_nodes;
+ pg_cgroups.memory_nodes 
+-------------------------
+ 0
+(1 row)
+
+-- reset
+ALTER SYSTEM RESET pg_cgroups.cpus;
+ALTER SYSTEM RESET pg_cgroups.memory_nodes;
+SELECT pg_reload_conf();
+ pg_reload_conf 
+----------------
+ t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.cpus;
+ pg_cgroups.cpus 
+-----------------
+ 0-3
+(1 row)
+
+SHOW pg_cgroups.memory_nodes;
+ pg_cgroups.memory_nodes 
+-------------------------
+ 0
+(1 row)
+

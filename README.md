@@ -200,3 +200,29 @@ CPU parameters
   the percentage of CPU bandwidth that can be used by PostgreSQL.
   The unit is 1/1000 of a percent, so the default value 100000 stands for
   100%.  The minimum value is 1000, which stands for 1%.
+
+NUMA parameters
+---------------
+
+These parameters limit the CPUs and memory nodes that can be used by PostgreSQL.
+Setting these parameters usually only makes sense on [NUMA][1] architectures.
+Use `numactl --hardware` so see your machine's NUMA configuration.
+
+If you restrict PostgreSQL to run on the CPUs that belong to one memory node,
+you should also restrict memory usage to that node and vice versa, so that
+PostgreSQL only needs to access node-local memory.
+
+All these parameters take the form of a comma separated list of zero based
+numbers or number ranges, like `0`, `0-3` or `4,7-9`.
+
+- `pg_cgroups.memory_nodes` (`text`, defaults to all online nodes)
+
+  This corresponds to the cgroup parameter `cpuset.mems` and defines the
+  memory nodes that PostgreSQL can use.
+
+- `pg_cgroups.cpus` (`text`, defaults to all online CPUs)
+
+  This corresponds to the cgroup parameter `cpuset.cpus` and defines the
+  CPUs that PostgreSQL can use.
+
+ [1]: https://en.wikipedia.org/wiki/Non-uniform_memory_access

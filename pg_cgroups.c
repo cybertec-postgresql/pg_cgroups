@@ -53,6 +53,7 @@ static void write_bps_limit_assign(const char *newval, void *extra);
 static void read_iops_limit_assign(const char *newval, void *extra);
 static void write_iops_limit_assign(const char *newval, void *extra);
 static void cpu_share_assign(int newval, void *extra);
+static bool cpuset_check(char * const newval, char * const online);
 static bool cpus_check(char **newval, void **extra, GucSource source);
 static void cpus_assign(const char *newval, void *extra);
 static bool memory_nodes_check(char **newval, void **extra, GucSource source);
@@ -372,7 +373,7 @@ _PG_init(void)
 		"Specifies which CPUs are available for this cluster.",
 		"This corresponds to \"cpuset.cpus\".",
 		&cpus,
-		get_online("cpu"),
+		strdup(get_online("cpu")),
 		PGC_SIGHUP,
 		0,
 		cpus_check,
@@ -385,7 +386,7 @@ _PG_init(void)
 		"Specifies which memory nodes are available for this cluster.",
 		"This corresponds to \"cpuset.mems\".",
 		&memory_nodes,
-		get_online("node"),
+		strdup(get_online("node")),
 		PGC_SIGHUP,
 		0,
 		memory_nodes_check,
@@ -426,7 +427,7 @@ char * const get_online(char * const what)
 
 	(void) close(fd);
 
-	value[(int)count] = '\0';
+	value[(int)count - 1] = '\0';
 	return value;
 }
 
@@ -535,7 +536,7 @@ memory_limit_assign(int newval, void *extra)
 {
 	int64_t mem_value, swap_value, newtotal;
 
-	/* only the pustmaster changes the kernel */
+	/* only the postmaster changes the kernel */
 	if (MyProcPid != PostmasterPid)
 		return;
 
@@ -571,7 +572,7 @@ swap_limit_assign(int newval, void *extra)
 {
 	int64_t swap_value, newtotal;
 
-	/* only the pustmaster changes the kernel */
+	/* only the postmaster changes the kernel */
 	if (MyProcPid != PostmasterPid)
 		return;
 
@@ -595,7 +596,7 @@ oom_killer_assign(bool newval, void *extra)
 {
 	int64_t oom_value = !newval;
 
-	/* only the pustmaster changes the kernel */
+	/* only the postmaster changes the kernel */
 	if (MyProcPid != PostmasterPid)
 		return;
 
@@ -733,7 +734,7 @@ device_limit_assign(char * const limit_name, char *newval)
 	int i;
 	char *device_limit_val = NULL;
 
-	/* only the pustmaster changes the kernel */
+	/* only the postmaster changes the kernel */
 	if (MyProcPid != PostmasterPid)
 		return;
 
@@ -777,33 +778,239 @@ write_iops_limit_assign(const char *newval, void *extra)
 void
 cpu_share_assign(int newval, void *extra)
 {
-	/* only the pustmaster changes the kernel */
+	/* only the postmaster changes the kernel */
 	if (MyProcPid != PostmasterPid)
 		return;
 
 	cg_set_int64("cpu", "cpu.cfs_quota_us", (int16_t) newval);
 }
 
+/*
+ * "newval" is parsed and checked if it matches the regexp
+ * ^[0-9]+\(-[0-9]+\)?\(,[0-9]+\(-[0-9]+\)?\)*
+ * "online" is of the form "m-n" and specifies the limits
+ * for the numbers that appera in "newval".
+ */
+bool
+cpuset_check(char * const newval, char * const online)
+{
+	int online_min, online_max, min = 0, max = 0;
+	char *start, *p, buf[100];
+	/*
+	 * values for "state":
+	 * 0: before comma group
+	 * 1: in first number
+	 * 2: after hyphen
+	 * 3: in second number
+	 */
+	int state = 0;
+
+	/* we take the first and the last number in "online" as limits */
+	start = p = online;
+	while (*p >= '0' && *p <= '9')
+		++p;
+	if (start == p || p - start >= 6)
+	{
+		GUC_check_errdetail(
+			"Online limit \"%s\" does not start with a valid number.",
+			online
+		);
+
+		return false;
+	}
+	memcpy(buf, start, p - start);
+	buf[p - start] = '\0';
+	online_min = atoi(buf);
+
+	p = start += strlen(online);
+	while (start > online && *(start-1) >= '0' && *(start-1) <= '9')
+		--start;
+	if (start == p || p - start >= 6)
+	{
+		GUC_check_errdetail(
+			"Online limit \"%s\" does not end with a valid number.",
+			online
+		);
+
+		return false;
+	}
+	online_max = atoi(start);
+
+	/* parse and check newval */
+	for (p = newval; *p != '\0'; ++p)
+	{
+		if (*p >= '0' && *p <= '9')
+		{
+			if (state == 0 || state == 2)
+			{
+				start = p;
+				++state;
+			}
+		}
+		else if (*p == '-')
+		{
+			if (state != 1)
+			{
+				GUC_check_errdetail(
+					"Value \"%s\" has \"-\" in an invalid place.",
+					newval
+				);
+
+				return false;
+			}
+
+			if (p - start >= 6)
+			{
+				GUC_check_errdetail(
+					"Value \"%s\" contains an invalid number.",
+					newval
+				);
+
+				return false;
+			}
+
+			memcpy(buf, start, p - start);
+			buf[p - start] = '\0';
+			min = atoi(buf);
+
+			if (min < online_min || min > online_max)
+			{
+				GUC_check_errdetail(
+					"Number %d is outside of range %d-%d.",
+					min, online_min, online_max
+				);
+
+				return false;
+			}
+
+			state = 2;
+		}
+		else if (*p == ',')
+		{
+			if (state != 1 && state != 3)
+			{
+				GUC_check_errdetail(
+					"Value \"%s\" is missing a number before \",\".",
+					newval
+				);
+
+				return false;
+			}
+
+			if (p - start >= 6)
+			{
+				GUC_check_errdetail(
+					"Value \"%s\" contains an invalid number.",
+					newval
+				);
+
+				return false;
+			}
+
+			memcpy(buf, start, p - start);
+			buf[p - start] = '\0';
+			max = atoi(buf);
+
+			if (max < min || max > online_max)
+			{
+				GUC_check_errdetail(
+					"Number %d is outside of range %d-%d.",
+					max, min, online_max
+				);
+
+				return false;
+			}
+
+			state = 0;
+		}
+		else
+		{
+			GUC_check_errdetail(
+				"Value \"%s\" contains an invalid character.",
+				newval
+			);
+
+			return false;
+		}
+	}
+
+	if (state != 1 && state != 3)
+	{
+		GUC_check_errdetail(
+			"Value \"%s\" does not end with a number.",
+			newval
+		);
+
+		return false;
+	}
+
+	if (p - start >= 6)
+	{
+		GUC_check_errdetail(
+			"Value \"%s\" contains an invalid number.",
+			newval
+		);
+
+		return false;
+	}
+
+	memcpy(buf, start, p - start);
+	buf[p - start] = '\0';
+	max = atoi(buf);
+
+	if (state == 1 && (max < online_min || max > online_max))
+	{
+		GUC_check_errdetail(
+			"Number %d is outside of range %d-%d.",
+			max, online_min, online_max
+		);
+
+		return false;
+	}
+
+	if (state == 3 && (max < min || max > online_max))
+	{
+		GUC_check_errdetail(
+			"Number %d is outside of range %d-%d.",
+			max, min, online_max
+		);
+
+		return false;
+	}
+
+	return true;
+}
+
 bool
 cpus_check(char **newval, void **extra, GucSource source)
 {
-	return true;
+	return cpuset_check(*newval, get_online("cpu"));
 }
 
 void
 cpus_assign(const char *newval, void *extra)
 {
+	/* only the postmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
+
+	cg_set_string("cpuset", "cpuset.cpus", (char *) newval);
 }
 
 bool
 memory_nodes_check(char **newval, void **extra, GucSource source)
 {
-	return true;
+	return cpuset_check(*newval, get_online("node"));
 }
 
 void
 memory_nodes_assign(const char *newval, void *extra)
 {
+	/* only the postmaster changes the kernel */
+	if (MyProcPid != PostmasterPid)
+		return;
+
+	cg_set_string("cpuset", "cpuset.mems", (char *) newval);
 }
 
 void on_exit_callback(int code, Datum arg)
