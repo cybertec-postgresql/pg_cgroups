@@ -837,7 +837,7 @@ cpuset_check(char * const newval, char * const online)
 	online_max = atoi(start);
 
 	/* parse and check newval */
-	for (p = newval; *p != '\0'; ++p)
+	for (p = newval; true; ++p)
 	{
 		if (*p >= '0' && *p <= '9')
 		{
@@ -885,12 +885,12 @@ cpuset_check(char * const newval, char * const online)
 
 			state = 2;
 		}
-		else if (*p == ',')
+		else if (*p == ',' || *p == '\0')
 		{
 			if (state != 1 && state != 3)
 			{
 				GUC_check_errdetail(
-					"Value \"%s\" is missing a number before \",\".",
+					"Value \"%s\" is missing a number at the end of a group.",
 					newval
 				);
 
@@ -911,7 +911,17 @@ cpuset_check(char * const newval, char * const online)
 			buf[p - start] = '\0';
 			max = atoi(buf);
 
-			if (max < min || max > online_max)
+			if (state == 1 && (max < online_min || max > online_max))
+			{
+				GUC_check_errdetail(
+					"Number %d is outside of range %d-%d.",
+					max, online_min, online_max
+				);
+
+				return false;
+			}
+
+			if (state == 3 && (max < min || max > online_max))
 			{
 				GUC_check_errdetail(
 					"Number %d is outside of range %d-%d.",
@@ -921,7 +931,10 @@ cpuset_check(char * const newval, char * const online)
 				return false;
 			}
 
-			state = 0;
+			if (*p == '\0')
+				break;
+			else
+				state = 0;
 		}
 		else
 		{
@@ -932,50 +945,6 @@ cpuset_check(char * const newval, char * const online)
 
 			return false;
 		}
-	}
-
-	if (state != 1 && state != 3)
-	{
-		GUC_check_errdetail(
-			"Value \"%s\" does not end with a number.",
-			newval
-		);
-
-		return false;
-	}
-
-	if (p - start >= 6)
-	{
-		GUC_check_errdetail(
-			"Value \"%s\" contains an invalid number.",
-			newval
-		);
-
-		return false;
-	}
-
-	memcpy(buf, start, p - start);
-	buf[p - start] = '\0';
-	max = atoi(buf);
-
-	if (state == 1 && (max < online_min || max > online_max))
-	{
-		GUC_check_errdetail(
-			"Number %d is outside of range %d-%d.",
-			max, online_min, online_max
-		);
-
-		return false;
-	}
-
-	if (state == 3 && (max < min || max > online_max))
-	{
-		GUC_check_errdetail(
-			"Number %d is outside of range %d-%d.",
-			max, min, online_max
-		);
-
-		return false;
 	}
 
 	return true;

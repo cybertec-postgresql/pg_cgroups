@@ -5,7 +5,7 @@ SHOW pg_cgroups.memory_nodes;
 -- test some incorrect settings
 ALTER SYSTEM SET pg_cgroups.cpus = '-1';
 ALTER SYSTEM SET pg_cgroups.cpus = '0-0-0';
-ALTER SYSTEM SET pg_cgroups.cpus = '0,1,1-0';
+ALTER SYSTEM SET pg_cgroups.cpus = '0,1-0,1';
 ALTER SYSTEM SET pg_cgroups.cpus = '10000';
 ALTER SYSTEM SET pg_cgroups.cpus = '1000000';
 ALTER SYSTEM SET pg_cgroups.cpus = ',1';
