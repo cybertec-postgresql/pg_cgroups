@@ -201,6 +201,9 @@ CPU parameters
   The unit is 1/1000 of a percent, so the default value 100000 stands for
   100%.  The minimum value is 1000, which stands for 1%.
 
+  To allow PostgreSQL to use more than one CPU fully, set the parameter to
+  a value greater than 100000.
+
 NUMA parameters
 ---------------
 
