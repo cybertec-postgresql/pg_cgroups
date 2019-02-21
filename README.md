@@ -15,9 +15,6 @@ building infrastructure installed.  If you do not build PostgreSQL
 from source, this is done by installing a `*-devel` or `*-dev`
 package.
 
-Since `pg_cgroups` uses `libcgroup`, you also have to install that library
-and its header files.
-
 Check that the correct `pg_config` is found on the `PATH`.  
 Then build and install `pg_cgroups` with
 
@@ -68,7 +65,7 @@ Then make sure that cgroups are initialized and `/etc/cgconfig.conf`
 is loaded.  How this is done will depend on the distribution.
 On RedHat-based systems, you would do the following:
 
-    yum install -y libcgroup libcgroup-devel libcgroup-tools
+    yum install -y libcgroup libcgroup-tools
     systemctl enable cgconfig
     systemctl start cgconfig
 

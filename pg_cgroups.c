@@ -5,6 +5,10 @@
 #include "postgres.h"
 #include "fmgr.h"
 
+#include "miscadmin.h"
+#include "storage/ipc.h"
+#include "utils/guc.h"
+
 #include <errno.h>
 #include <fcntl.h>
 #include <libcgroup.h>
@@ -14,14 +18,9 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "miscadmin.h"
-#include "storage/ipc.h"
-#include "utils/guc.h"
+#include "pg_cgroups.h"
 
 PG_MODULE_MAGIC;
-
-/* global variables */
-static char cg_name[100];
 
 /* GUCs defined by the module */
 static int memory_limit = -1;
@@ -31,17 +30,11 @@ static char *read_bps_limit = NULL;
 static char *write_bps_limit = NULL;
 static char *read_iops_limit = NULL;
 static char *write_iops_limit = NULL;
-static int cpu_share = 100000;
-static char* cpus = NULL;
-static char* memory_nodes = NULL;
-
-/* exported function declarations */
-extern void _PG_init(void);
+static int cpu_share = -1;	/* set during module initialization */
+static char* cpus = NULL;	/* set during module initialization */
+static char* memory_nodes = NULL;	/* set during module initialization */
 
 /* static functions declarations */
-static char * const get_online(char * const what);
-static void cg_set_string(char * const controller, char * const property, char * const value);
-static void cg_set_int64(char * const controller, char * const property, int64_t value);
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
 static void memory_limit_assign(int newval, void *extra);
 static void swap_limit_assign(int newval, void *extra);
@@ -53,209 +46,31 @@ static void write_bps_limit_assign(const char *newval, void *extra);
 static void read_iops_limit_assign(const char *newval, void *extra);
 static void write_iops_limit_assign(const char *newval, void *extra);
 static void cpu_share_assign(int newval, void *extra);
+static bool parse_online(char * const online, int *pmin, int *pmax);
 static bool cpuset_check(char * const newval, char * const online);
 static bool cpus_check(char **newval, void **extra, GucSource source);
 static void cpus_assign(const char *newval, void *extra);
 static bool memory_nodes_check(char **newval, void **extra, GucSource source);
 static void memory_nodes_assign(const char *newval, void *extra);
-static void on_exit_callback(int code, Datum arg);
 
 void
 _PG_init(void)
 {
-	int rc;
-	pid_t pid;
-	struct cgroup *cg;
-	struct cgroup_controller *cg_memory;
-	struct cgroup_controller *cg_cpu;
-	struct cgroup_controller *cg_blkio;
-	struct cgroup_controller *cg_cpuset;
+	int dummy, num_cpus;
 
 	if (!process_shared_preload_libraries_in_progress)
 		ereport(FATAL,
 				(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 				 errmsg("\"pg_cgroups\" must be added to \"shared_preload_libraries\"")));
 
-	/* initialize cgroups library */
-	if ((rc = cgroup_init()))
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot initialize cgroups library: %s", cgroup_strerror(rc))));
+	/* initialize cgroups library and set get GUC defaults */
+	cg_init();
 
-	/*
-	 * Before we create our new cgroup, we have to set some required properties on the
-	 * (hopefully) existing "/postgres" cgroup.  We could require the user to add them
-	 * to /etc/cgconfig.conf, but it seems more robust and user-friendly to set them
-	 * ourselves.
-	 * Moreover, this is a good test if the "/postgres" cgroup has been set up correctly.
-	 */
-	if (!(cg = cgroup_new_cgroup("/postgres")))
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot create struct cgroup \"/postgres\"")));
+	/* set a default value (and upper limit) for cpu_share */
+	if (!parse_online(get_def_cpus(), &dummy, &num_cpus))
+		elog(FATAL, "internal error getting CPU count");
 
-	if ((rc = cgroup_get_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"/postgres\" from kernel"),
-				 errdetail("system error: %s", cgroup_strerror(rc)),
-				 errhint("Configure the \"/postgres\" cgroup properly before starting the server.")));
-	}
-
-	/* set "cpuset.cpus" and "cpuset.cpus" to good defaults */
-	if ((rc = cgroup_set_value_string(
-					cgroup_get_controller(cg, "cpuset"),
-					"cpuset.cpus",
-					get_online("cpu")
-		)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set property \"cpuset.cpus\" for cpuset controller in cgroup \"/postgres\"")));
-	}
-
-	if ((rc = cgroup_set_value_string(
-					cgroup_get_controller(cg, "cpuset"),
-					"cpuset.mems",
-					get_online("node")
-		)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set property \"cpuset.mems\" for cpuset controller in cgroup \"/postgres\"")));
-	}
-
-	/* update the cgroup "/postgres" in the kernel */
-	if ((rc = cgroup_modify_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot modify cgroup \"/postgres\""),
-				 errdetail("system error: %s", cgroup_strerror(rc)),
-				 errhint("Configure the permissions of the \"/postgres\" cgroup properly before starting the server.")));
-	}
-
-	cgroup_free(&cg);
-
-	/* our new cgroup will be called "/postgres/<pid>" */
-	pid = getpid();
-	snprintf(cg_name, 100, "/postgres/%d", pid);
-
-	/* create a cgroup structure in memory */
-	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
-
-	/* add the controllers we want */
-	if (!(cg_memory = cgroup_add_controller(cg, "memory")))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot add memory controller to cgroup \"%s\"", cg_name)));
-	}
-	if (!(cg_cpu = cgroup_add_controller(cg, "cpu")))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot add cpu controller to cgroup \"%s\"", cg_name)));
-	}
-	if (!(cg_blkio = cgroup_add_controller(cg, "blkio")))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot add blkio controller to cgroup \"%s\"", cg_name)));
-	}
-	if (!(cg_cpuset = cgroup_add_controller(cg, "cpuset")))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot add cpuset controller to cgroup \"%s\"", cg_name)));
-	}
-
-	/* set "cpuset.cpus" and "cpuset.cpus" to good defaults */
-	if ((rc = cgroup_add_value_string(
-					cg_cpuset,
-					"cpuset.cpus",
-					get_online("cpu")
-		)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set property \"cpuset.cpus\" for cpuset controller in cgroup \"%s\"",
-						cg_name)));
-	}
-
-	if ((rc = cgroup_add_value_string(
-					cg_cpuset,
-					"cpuset.mems",
-					get_online("node")
-		)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set property \"cpuset.mems\" for cpuset controller in cgroup \"%s\"",
-						cg_name)));
-	}
-
-	/* set "cpu.cfs_period_us" to 100000 */
-	if ((rc = cgroup_add_value_int64(
-				cg_cpu,
-				"cpu.cfs_period_us",
-				100000
-		)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set property \"cpu.cfs_period_us\" for cpu controller in cgroup \"%s\"",
-						cg_name)));
-	}
-
-	/* set permissions to the current uid and gid */
-	if ((rc = cgroup_set_uid_gid(cg, getuid(), getgid(), getuid(), getgid())))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set permissions for cgroup \"%s\": %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	cgroup_set_permissions(cg, 0755, 0644, 0644);
-
-	/* add an atexit callback that will try to remove the cgroup */
-	on_proc_exit(&on_exit_callback, PointerGetDatum(NULL));
-
-	/* actually create the control group */
-	if ((rc = cgroup_create_cgroup(cg, 0)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("error creating cgroup \"%s\": %s", cg_name, cgroup_strerror(rc))));
-	}
-
-	/* move the postmaster to the cgroup */
-	if ((rc = cgroup_attach_task_pid(cg, pid)))
-	{
-		cgroup_free(&cg);
-		ereport(FATAL,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot move process %d to cgroup \"%s\": %s",
-						pid, cg_name, cgroup_strerror(rc))));
-	}
+	cpu_share = (num_cpus + 1) * 100000;
 
 	/* once the control group is set up, we can define the GUCs */
 	DefineCustomIntVariable(
@@ -355,12 +170,12 @@ _PG_init(void)
 
 	DefineCustomIntVariable(
 		"pg_cgroups.cpu_share",
-		"Limit percentage of the CPU time available (100000 = 100%).",
+		"Limit share of the available CPU time (100000 = 1 core).",
 		"This corresponds to \"cpu.cfs_quota_us\".",
 		&cpu_share,
-		100000,
+		cpu_share,
 		1000,
-		100000,
+		cpu_share,
 		PGC_SIGHUP,
 		0,
 		NULL,
@@ -373,7 +188,7 @@ _PG_init(void)
 		"Specifies which CPUs are available for this cluster.",
 		"This corresponds to \"cpuset.cpus\".",
 		&cpus,
-		strdup(get_online("cpu")),
+		strdup(get_def_cpus()),
 		PGC_SIGHUP,
 		0,
 		cpus_check,
@@ -386,7 +201,7 @@ _PG_init(void)
 		"Specifies which memory nodes are available for this cluster.",
 		"This corresponds to \"cpuset.mems\".",
 		&memory_nodes,
-		strdup(get_online("node")),
+		strdup(get_def_memory_nodes()),
 		PGC_SIGHUP,
 		0,
 		memory_nodes_check,
@@ -395,134 +210,6 @@ _PG_init(void)
 	);
 
 	EmitWarningsOnPlaceholders("pg_cgroups");
-
-	cgroup_free(&cg);
-}
-
-/*
- * Get "online" parameters from the kernel.
- * "what" can be "cpu" or "node".
- */
-char * const get_online(char * const what)
-{
-	static char value[100], path[100];
-	int fd;
-	ssize_t count;
-
-	snprintf(path, 100, "/sys/devices/system/%s/online", what);
-
-	errno = 0;
-	if ((fd = open(path, O_RDONLY)) == -1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot open \"%s\": %m", path)));
-
-	if ((count = read(fd, value, 99)) == -1)
-	{
-		(void) close(fd);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read from \"%s\": %m", path)));
-	}
-
-	(void) close(fd);
-
-	value[(int)count - 1] = '\0';
-	return value;
-}
-
-/*
- * Write a string property to a kernel cgroup.
- */
-void cg_set_string(char * const controller, char * const property, char * const value)
-{
-	int rc;
-	struct cgroup *cg;
-
-	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
-
-	if ((rc = cgroup_get_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	if ((rc = cgroup_set_value_string(
-					cgroup_get_controller(cg, controller),
-					property,
-					value
-			)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set \"%s\" for cgroup \"%s\": %s",
-						property, cg_name, cgroup_strerror(rc))));
-	}
-
-	if ((rc = cgroup_modify_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot modify cgroup \"%s\": %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	cgroup_free(&cg);
-}
-
-/*
- * Write a 64-bit integer property to a kernel cgroup.
- */
-void cg_set_int64(char * const controller, char * const property, int64_t value)
-{
-	int rc;
-	struct cgroup *cg;
-
-	if (!(cg = cgroup_new_cgroup(cg_name)))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot create struct cgroup \"%s\"", cg_name)));
-
-	if ((rc = cgroup_get_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot read cgroup \"%s\" from kernel: %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	if ((rc = cgroup_set_value_int64(
-					cgroup_get_controller(cg, controller),
-					property,
-					value
-			)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot set \"%s\" for cgroup \"%s\": %s",
-						property, cg_name, cgroup_strerror(rc))));
-	}
-
-	if ((rc = cgroup_modify_cgroup(cg)))
-	{
-		cgroup_free(&cg);
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("cannot modify cgroup \"%s\": %s",
-						cg_name, cgroup_strerror(rc))));
-	}
-
-	cgroup_free(&cg);
 }
 
 bool
@@ -556,14 +243,14 @@ memory_limit_assign(int newval, void *extra)
 		|| (newval > memory_limit && memory_limit != -1))
 	{
 		/* we have to raise the limit on memory + swap first */
-		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
-		cg_set_int64("memory", "memory.limit_in_bytes", mem_value);
+		cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
+		cg_set_int64(CONTROLLER_MEMORY, "memory.limit_in_bytes", mem_value);
 	}
 	else
 	{
 		/* we have to lower the limit on memory + swap last */
-		cg_set_int64("memory", "memory.limit_in_bytes", mem_value);
-		cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
+		cg_set_int64(CONTROLLER_MEMORY, "memory.limit_in_bytes", mem_value);
+		cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
 	}
 }
 
@@ -588,7 +275,7 @@ swap_limit_assign(int newval, void *extra)
 	/* convert from MB to bytes */
 	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
-	cg_set_int64("memory", "memory.memsw.limit_in_bytes", swap_value);
+	cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
 }
 
 void
@@ -600,7 +287,7 @@ oom_killer_assign(bool newval, void *extra)
 	if (MyProcPid != PostmasterPid)
 		return;
 
-	cg_set_int64("memory", "memory.oom_control", oom_value);
+	cg_set_int64(CONTROLLER_MEMORY, "memory.oom_control", oom_value);
 }
 
 bool
@@ -746,7 +433,7 @@ device_limit_assign(char * const limit_name, char *newval)
 			if (device_limit_val[i] == ',')
 				device_limit_val[i] = '\n';
 
-	cg_set_string("blkio", limit_name, device_limit_val);
+	cg_set_string(CONTROLLER_BLKIO, limit_name, device_limit_val);
 
 	pfree(device_limit_val);
 }
@@ -782,7 +469,51 @@ cpu_share_assign(int newval, void *extra)
 	if (MyProcPid != PostmasterPid)
 		return;
 
-	cg_set_int64("cpu", "cpu.cfs_quota_us", (int16_t) newval);
+	cg_set_int64(CONTROLLER_CPU, "cpu.cfs_quota_us", (int16_t) newval);
+}
+
+/*
+ * Extracts the first and the last number from a string that starts
+ * and ends with a number.
+ */
+bool
+parse_online(char * const online, int *pmin, int *pmax)
+{
+	char *start, *p, buf[100];
+
+	/* we read from the start to get the first number */
+	start = p = online;
+	while (*p >= '0' && *p <= '9')
+		++p;
+	if (start == p || p - start >= 6)
+	{
+		GUC_check_errdetail(
+			"Online limit \"%s\" does not start with a valid number.",
+			online
+		);
+
+		return false;
+	}
+	memcpy(buf, start, p - start);
+	buf[p - start] = '\0';
+	*pmin = atoi(buf);
+
+	/* now we read backwards from the end for the second number */
+	p = start += strlen(online);
+	while (start > online && *(start-1) >= '0' && *(start-1) <= '9')
+		--start;
+	if (start == p || p - start >= 6)
+	{
+		GUC_check_errdetail(
+			"Online limit \"%s\" does not end with a valid number.",
+			online
+		);
+
+		return false;
+	}
+	*pmax = atoi(start);
+
+	return true;
 }
 
 /*
@@ -806,35 +537,8 @@ cpuset_check(char * const newval, char * const online)
 	int state = 0;
 
 	/* we take the first and the last number in "online" as limits */
-	start = p = online;
-	while (*p >= '0' && *p <= '9')
-		++p;
-	if (start == p || p - start >= 6)
-	{
-		GUC_check_errdetail(
-			"Online limit \"%s\" does not start with a valid number.",
-			online
-		);
-
+	if (!parse_online(online, &online_min, &online_max))
 		return false;
-	}
-	memcpy(buf, start, p - start);
-	buf[p - start] = '\0';
-	online_min = atoi(buf);
-
-	p = start += strlen(online);
-	while (start > online && *(start-1) >= '0' && *(start-1) <= '9')
-		--start;
-	if (start == p || p - start >= 6)
-	{
-		GUC_check_errdetail(
-			"Online limit \"%s\" does not end with a valid number.",
-			online
-		);
-
-		return false;
-	}
-	online_max = atoi(start);
 
 	/* parse and check newval */
 	for (p = newval; true; ++p)
@@ -953,7 +657,7 @@ cpuset_check(char * const newval, char * const online)
 bool
 cpus_check(char **newval, void **extra, GucSource source)
 {
-	return cpuset_check(*newval, get_online("cpu"));
+	return cpuset_check(*newval, get_def_cpus());
 }
 
 void
@@ -963,13 +667,13 @@ cpus_assign(const char *newval, void *extra)
 	if (MyProcPid != PostmasterPid)
 		return;
 
-	cg_set_string("cpuset", "cpuset.cpus", (char *) newval);
+	cg_set_string(CONTROLLER_CPUSET, "cpuset.cpus", (char *) newval);
 }
 
 bool
 memory_nodes_check(char **newval, void **extra, GucSource source)
 {
-	return cpuset_check(*newval, get_online("node"));
+	return cpuset_check(*newval, get_def_memory_nodes());
 }
 
 void
@@ -979,20 +683,5 @@ memory_nodes_assign(const char *newval, void *extra)
 	if (MyProcPid != PostmasterPid)
 		return;
 
-	cg_set_string("cpuset", "cpuset.mems", (char *) newval);
-}
-
-void on_exit_callback(int code, Datum arg)
-{
-	struct cgroup *cg;
-
-	/* ignore all errors since we cannot report them anyway */
-	if (!(cg = cgroup_new_cgroup(cg_name)))
-		return;
-
-	(void) cgroup_get_cgroup(cg);
-
-	(void) cgroup_delete_cgroup(cg, 0);
-
-	cgroup_free(&cg);
+	cg_set_string(CONTROLLER_CPUSET, "cpuset.mems", (char *) newval);
 }

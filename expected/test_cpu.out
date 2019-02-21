@@ -1,13 +1,3 @@
--- check the default settings
-SHOW pg_cgroups.cpu_share;
- pg_cgroups.cpu_share 
-----------------------
- 100000
-(1 row)
-
--- this should fail
-ALTER SYSTEM SET pg_cgroups.cpu_share = 0;
-ERROR:  0 is outside the valid range for parameter "pg_cgroups.cpu_share" (1000 .. 100000)
 -- allow 50% of the availabe CPU
 ALTER SYSTEM SET pg_cgroups.cpu_share = 50000;
 SELECT pg_reload_conf();
@@ -34,17 +24,5 @@ SELECT pg_reload_conf();
  pg_reload_conf 
 ----------------
  t
-(1 row)
-
-SELECT pg_sleep_for('0.3');
- pg_sleep_for 
---------------
- 
-(1 row)
-
-SHOW pg_cgroups.cpu_share;
- pg_cgroups.cpu_share 
-----------------------
- 100000
 (1 row)
 

@@ -1,7 +1,6 @@
 MODULE_big = pg_cgroups
-OBJS = pg_cgroups.o
+OBJS = pg_cgroups.o libcg1.o
 DOCS = README.pg_cgroups
-SHLIB_LINK = -lcgroup
 REGRESS = test_memory test_blkio test_cpu test_cpuset
 
 PG_CONFIG = pg_config
