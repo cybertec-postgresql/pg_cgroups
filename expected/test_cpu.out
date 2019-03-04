@@ -1,3 +1,13 @@
+-- check the default settings
+SHOW pg_cgroups.cpu_share;
+ pg_cgroups.cpu_share 
+----------------------
+ -1
+(1 row)
+
+-- this should fail
+ALTER SYSTEM SET pg_cgroups.cpu_share = 0;
+ERROR:  invalid value for parameter "pg_cgroups.cpu_share": 0
 -- allow 50% of the availabe CPU
 ALTER SYSTEM SET pg_cgroups.cpu_share = 50000;
 SELECT pg_reload_conf();
@@ -24,5 +34,17 @@ SELECT pg_reload_conf();
  pg_reload_conf 
 ----------------
  t
+(1 row)
+
+SELECT pg_sleep_for('0.3');
+ pg_sleep_for 
+--------------
+ 
+(1 row)
+
+SHOW pg_cgroups.cpu_share;
+ pg_cgroups.cpu_share 
+----------------------
+ -1
 (1 row)
 

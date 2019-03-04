@@ -191,12 +191,14 @@ Block-I/O parameters
 CPU parameters
 --------------
 
-- `pg_cgroups.cpu_share` (`integer`, default 100000)
+- `pg_cgroups.cpu_share` (`integer`, default -1)
 
   This corresponds to the cgroup cpu parameter `cpu.cfs_quota_us` and defines
   the percentage of CPU bandwidth that can be used by PostgreSQL.
-  The unit is 1/1000 of a percent, so the default value 100000 stands for
-  100%.  The minimum value is 1000, which stands for 1%.
+  The unit is 1/1000 of a percent, so 100000 stands for 100% of one CPU core.
+  The minimum value is 1000, which stands for 1%.
+
+  The default value -1 means &ldquo;no limit&rdqo;.
 
   To allow PostgreSQL to use more than one CPU fully, set the parameter to
   a value greater than 100000.

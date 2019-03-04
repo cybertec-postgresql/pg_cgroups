@@ -11,7 +11,6 @@
 
 #include <errno.h>
 #include <fcntl.h>
-#include <libcgroup.h>
 #include <limits.h>
 #include <stdio.h>
 #include <sys/stat.h>
@@ -30,9 +29,12 @@ static char *read_bps_limit = NULL;
 static char *write_bps_limit = NULL;
 static char *read_iops_limit = NULL;
 static char *write_iops_limit = NULL;
-static int cpu_share = -1;	/* set during module initialization */
+static int cpu_share = -1;
 static char* cpus = NULL;	/* set during module initialization */
 static char* memory_nodes = NULL;	/* set during module initialization */
+
+/* other static variables */
+static int max_cpu_share = -1;	/* set during module initialization */
 
 /* static functions declarations */
 static bool memory_limit_check(int *newval, void **extra, GucSource source);
@@ -45,6 +47,7 @@ static void read_bps_limit_assign(const char *newval, void *extra);
 static void write_bps_limit_assign(const char *newval, void *extra);
 static void read_iops_limit_assign(const char *newval, void *extra);
 static void write_iops_limit_assign(const char *newval, void *extra);
+static bool cpu_share_check(int *newval, void **extra, GucSource source);
 static void cpu_share_assign(int newval, void *extra);
 static bool parse_online(char * const online, int *pmin, int *pmax);
 static bool cpuset_check(char * const newval, char * const online);
@@ -70,7 +73,7 @@ _PG_init(void)
 	if (!parse_online(get_def_cpus(), &dummy, &num_cpus))
 		elog(FATAL, "internal error getting CPU count");
 
-	cpu_share = (num_cpus + 1) * 100000;
+	max_cpu_share = (num_cpus + 1) * 100000;
 
 	/* once the control group is set up, we can define the GUCs */
 	DefineCustomIntVariable(
@@ -173,12 +176,12 @@ _PG_init(void)
 		"Limit share of the available CPU time (100000 = 1 core).",
 		"This corresponds to \"cpu.cfs_quota_us\".",
 		&cpu_share,
-		cpu_share,
-		1000,
-		cpu_share,
+		-1,
+		-1,
+		max_cpu_share,
 		PGC_SIGHUP,
 		0,
-		NULL,
+		cpu_share_check,
 		cpu_share_assign,
 		NULL
 	);
@@ -460,6 +463,12 @@ void
 write_iops_limit_assign(const char *newval, void *extra)
 {
 	device_limit_assign("blkio.throttle.write_iops_device", (char *) newval);
+}
+
+bool
+cpu_share_check(int *newval, void **extra, GucSource source)
+{
+	return (bool) (*newval == -1 || *newval >= 1000);
 }
 
 void
