@@ -8,6 +8,7 @@
 #define CONTROLLER_CPUSET 3
 
 /* defined in pg_cgrops.c */
+extern const char * const PG_CGROUPS_VERSION;
 extern void _PG_init(void);
 
 /* defined in libcg1.c */

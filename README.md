@@ -228,3 +228,18 @@ numbers or number ranges, like `0`, `0-3` or `4,7-9`.
   CPUs that PostgreSQL can use.
 
  [1]: https://en.wikipedia.org/wiki/Non-uniform_memory_access
+
+Support
+=======
+
+You can
+[open an issue](https://github.com/cybertec-postgresql/pg_cgroups/issues)
+on Githob if you have questions or problems.
+
+For professional support, contact
+[Cybertec](https://www.cybertec-postgresql.com).
+
+Make sure you report which version you are using.
+The version can be found with this command:
+
+    strings pg_cgroups.so | grep 'pg_cgroups version'

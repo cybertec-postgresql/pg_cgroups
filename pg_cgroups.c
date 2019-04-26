@@ -21,6 +21,9 @@
 
 PG_MODULE_MAGIC;
 
+/* a version string that can be found in the executable */
+const char * const PG_CGROUPS_VERSION = "pg_cgroups version 1.0.0";
+
 /* GUCs defined by the module */
 static int memory_limit = -1;
 static int swap_limit = -1;
