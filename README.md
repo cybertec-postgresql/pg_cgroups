@@ -234,7 +234,7 @@ Support
 
 You can
 [open an issue](https://github.com/cybertec-postgresql/pg_cgroups/issues)
-on Githob if you have questions or problems.
+on Github if you have questions or problems.
 
 For professional support, contact
 [Cybertec](https://www.cybertec-postgresql.com).
