@@ -21,8 +21,7 @@
 
 PG_MODULE_MAGIC;
 
-/* a version string that can be found in the executable */
-const char * const PG_CGROUPS_VERSION = "pg_cgroups version 1.0.0";
+static char *pg_cgroups_version;
 
 /* GUCs defined by the module */
 static int memory_limit = -1;
@@ -212,6 +211,19 @@ _PG_init(void)
 		0,
 		memory_nodes_check,
 		memory_nodes_assign,
+		NULL
+	);
+
+	DefineCustomStringVariable(
+		"pg_cgroups.version",
+		"The version of pg_cgroups.",
+		NULL,
+		&pg_cgroups_version,
+		PG_CGROUPS_VERSION,
+		PGC_INTERNAL,
+		0,
+		NULL,
+		NULL,
 		NULL
 	);
 
@@ -481,7 +493,7 @@ cpu_share_assign(int newval, void *extra)
 	if (MyProcPid != PostmasterPid)
 		return;
 
-	cg_set_int64(CONTROLLER_CPU, "cpu.cfs_quota_us", (int16_t) newval);
+	cg_set_int64(CONTROLLER_CPU, "cpu.cfs_quota_us", (int64_t) newval);
 }
 
 /*

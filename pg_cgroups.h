@@ -1,5 +1,6 @@
-/* cgroup controllers we use */
+#define PG_CGROUPS_VERSION "pg_cgroups version 0.9.0"
 
+/* cgroup controllers we use */
 #define MAX_CONTROLLERS 4
 
 #define CONTROLLER_MEMORY 0
@@ -8,7 +9,6 @@
 #define CONTROLLER_CPUSET 3
 
 /* defined in pg_cgrops.c */
-extern const char * const PG_CGROUPS_VERSION;
 extern void _PG_init(void);
 
 /* defined in libcg1.c */

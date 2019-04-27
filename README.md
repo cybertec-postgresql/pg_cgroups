@@ -104,7 +104,7 @@ The parameters are:
 Memory parameters
 -----------------
 
-- `pg_cgroups.memory_limit` (`integer`, unit MB, default value -1)
+- `pg_cgroups.memory_limit` (type `integer`, unit MB, default value -1)
 
   This corresponds to the cgroup memory parameter
   `memory.limit_in_bytes` and limits the amount of RAM available.
@@ -114,7 +114,7 @@ Memory parameters
   Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
   parameter determines what will happen.
 
-- `pg_cgroups.swap_limit` (`integer`, unit MB, default value -1)
+- `pg_cgroups.swap_limit` (type `integer`, unit MB, default value -1)
 
   This configures the cgroup memory parameter `memory.memsw.limit_in_bytes`
   and limits the available swap space
@@ -126,7 +126,7 @@ Memory parameters
   Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
   parameter determines what will happen.
 
-- `pg_cgroups.oom_killer` (`boolean`, default value `on`)
+- `pg_cgroups.oom_killer` (type `boolean`, default value `on`)
 
   This parameter configures what will happen if the limit on memory and swap
   space is exhausted.  If set to `on`, the Linux out-of-memory killer will
@@ -164,25 +164,25 @@ Block-I/O parameters
   However, setting the limit to an empty string and restarting the server
   will work, since the cgroup is deleted and re-created in this case.
 
-- `pg_cgroups.read_bps_limit` (`text`, default empty)
+- `pg_cgroups.read_bps_limit` (type `text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.read_bps_device` and limits the amount of bytes that can
   be read per second.
 
-- `pg_cgroups.write_bps_limit` (`text`, default empty)
+- `pg_cgroups.write_bps_limit` (type `text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.write_bps_device` and limits the amount of bytes that can
   be written per second.
 
-- `pg_cgroups.read_iops_limit` (`text`, default empty)
+- `pg_cgroups.read_iops_limit` (type `text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.read_iops_device` and limits the number of read I/O
   operations that can be performed per second.
 
-- `pg_cgroups.write_iops_limit` (`text`, default empty)
+- `pg_cgroups.write_iops_limit` (type `text`, default empty)
 
   This corresponds to the cgroup blkio parameter
   `blkio.throttle.write_iops_device` and limits the number of write I/O
@@ -191,7 +191,7 @@ Block-I/O parameters
 CPU parameters
 --------------
 
-- `pg_cgroups.cpu_share` (`integer`, default -1)
+- `pg_cgroups.cpu_share` (type `integer`, default -1)
 
   This corresponds to the cgroup cpu parameter `cpu.cfs_quota_us` and defines
   the percentage of CPU bandwidth that can be used by PostgreSQL.
@@ -202,6 +202,14 @@ CPU parameters
 
   To allow PostgreSQL to use more than one CPU fully, set the parameter to
   a value greater than 100000.
+
+Diagnostic parameter
+--------------------
+
+- `pg_cgroups.version` (type `text`)
+
+  This parameter shows the current version of `pg_cgroups` and can only
+  be read.
 
 NUMA parameters
 ---------------
@@ -240,6 +248,6 @@ For professional support, contact
 [Cybertec](https://www.cybertec-postgresql.com).
 
 Make sure you report which version you are using.
-The version can be found with this command:
+The version can be found with this SQL command:
 
-    strings pg_cgroups.so | grep 'pg_cgroups version'
+    SHOW pg_cgroups.version;

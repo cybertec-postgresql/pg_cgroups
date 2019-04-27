@@ -37,7 +37,7 @@ static struct {
 	{"cpuset", false, NULL}
 };
 /* postmaster PID */
-static pid_t pid;
+static pid_t postmaster_pid;
 
 /* default values for the parameters */
 static char *def_cpus;
@@ -268,7 +268,7 @@ void cg_write_string(int controller, char * const cgroup, char * const parameter
 				 errmsg("error opening file \"%s\" for write: %m", path)));
 
 	/*
-	 * The attempt to write an empty string causes and error,
+	 * The attempt to write an empty string causes an error,
 	 * so don't write anything in this case.
 	 * The file is truncated on open anyway.
 	 */
@@ -291,12 +291,12 @@ void cg_move_postmaster(char * const cgroup, bool silent)
 	char *path, pid_s[30];
 
 	/* no process ID can be longer than 29 digits */
-	snprintf(pid_s, 30, "%d\n", pid);
+	snprintf(pid_s, 30, "%d\n", postmaster_pid);
 
 	for (i=0; i<MAX_CONTROLLERS; ++i)
 	{
 		path = palloc(strlen(cgctl[i].mountpoint) + 23);
-		sprintf(path, "%s/postgres/cgroup.procs", cgctl[i].mountpoint);
+		sprintf(path, "%s/%s/tasks", cgctl[i].mountpoint, cgroup);
 
 		fd = OpenTransientFile(path, O_WRONLY);
 
@@ -336,9 +336,9 @@ void on_exit_callback(int code, Datum arg)
 
 	for (i=0; i<MAX_CONTROLLERS; ++i)
 	{
-		/* "pid" is shorter than 30 digits */
+		/* "postmaster_pid" is shorter than 30 digits */
 		path = palloc(strlen(cgctl[i].mountpoint) + 40);
-		sprintf(path, "%s/postgres/%d", cgctl[i].mountpoint, pid);
+		sprintf(path, "%s/postgres/%d", cgctl[i].mountpoint, postmaster_pid);
 		(void) rmdir(path);
 	}
 }
@@ -360,7 +360,7 @@ void cg_init(void)
 	char *path, *cgroup;
 	int i;
 
-	pid = getpid();
+	postmaster_pid = getpid();
 
 	/* check that all required cgroup controllers are present */
 	check_controllers();
@@ -375,13 +375,13 @@ void cg_init(void)
 	for (i=0; i<MAX_CONTROLLERS; ++i)
 	{
 		path = palloc(strlen(cgctl[i].mountpoint) + 31);
-		sprintf(path, "%s/postgres/%d", cgctl[i].mountpoint, pid);
+		sprintf(path, "%s/postgres/%d", cgctl[i].mountpoint, postmaster_pid);
 
 		if (mkdir(path, 0700) == -1)
 			ereport(FATAL,
 					(errcode(ERRCODE_SYSTEM_ERROR),
 					 errmsg("cannot create control group \"/postgres/%d\" for the \"%s\" controller: %m",
-							pid, cgctl[i].name),
+							postmaster_pid, cgctl[i].name),
 					 errhint("You have to setup the \"/postgres\" control group as described in the pg_cgroup documentation.")));
 
 		pfree(path);
@@ -393,7 +393,7 @@ void cg_init(void)
 	 * We must do this on the "/postgres" cgroup first.
 	 */
 	cgroup = palloc(40);
-	sprintf(cgroup, "postgres/%d", pid);
+	sprintf(cgroup, "postgres/%d", postmaster_pid);
 	def_cpus = get_online("cpu");
 	cg_write_string(CONTROLLER_CPUSET, "postgres", "cpuset.cpus", def_cpus);
 	cg_write_string(CONTROLLER_CPUSET, cgroup, "cpuset.cpus", def_cpus);
@@ -415,8 +415,8 @@ void cg_set_string(int controller, char * const parameter, char * const value)
 {
 	char cgroup[40];
 
-	/* "pid" cannot exceed 30 digits */
-	sprintf(cgroup, "postgres/%d", pid);
+	/* "postmaster_pid" cannot exceed 30 digits */
+	sprintf(cgroup, "postgres/%d", postmaster_pid);
 
 	cg_write_string(controller, cgroup, parameter, value);
 }
