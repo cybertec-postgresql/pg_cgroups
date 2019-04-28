@@ -51,7 +51,8 @@ static void check_controllers(void);
 static void get_mountpoints(void);
 static char * const get_online(char * const what);
 static void cg_write_string(int controller, char * const cgroup, char * const parameter, char * const value);
-static void cg_move_postmaster(char * const cgroup, bool silent);
+static char *cg_read_string(int controller, char * const cgroup, char * const parameter);
+static void cg_move_process(char * const cgroup, char * const process, bool silent);
 static void on_exit_callback(int code, Datum arg);
 
 /*
@@ -59,7 +60,8 @@ static void on_exit_callback(int code, Datum arg);
  */
 
 /* check if all required controllers are present */
-void check_controllers()
+void
+check_controllers()
 {
 	FILE *cgfile;
 	char *line = NULL;
@@ -120,7 +122,8 @@ void check_controllers()
 }
 
 /* find the mount points for the cgroup controllers*/
-void get_mountpoints()
+void
+get_mountpoints()
 {
 	FILE *mntfile;
 	struct mntent *mnt;
@@ -194,7 +197,8 @@ void get_mountpoints()
  * "what" can be "cpu" or "node".
  * The result is a persistently palloc'ed string.
  */
-char * const get_online(char * const what)
+char *
+const get_online(char * const what)
 {
 	static char buf[100], *value, *path;
 	int fd;
@@ -244,9 +248,10 @@ char * const get_online(char * const what)
 }
 
 /*
- * Write a control group parameter parameter.
+ * Write a control group parameter.
  */
-void cg_write_string(int controller, char * const cgroup, char * const parameter, char * const value)
+void
+cg_write_string(int controller, char * const cgroup, char * const parameter, char * const value)
 {
 	char *path;
 	int fd;
@@ -265,7 +270,7 @@ void cg_write_string(int controller, char * const cgroup, char * const parameter
 	if (fd == -1)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("error opening file \"%s\" for write: %m", path)));
+				 errmsg("error opening file \"%s\" for writing: %m", path)));
 
 	/*
 	 * The attempt to write an empty string causes an error,
@@ -273,9 +278,9 @@ void cg_write_string(int controller, char * const cgroup, char * const parameter
 	 * The file is truncated on open anyway.
 	 */
 	if (strlen(value) > 0 && write(fd, value, strlen(value)) < 0)
-			ereport(ERROR,
-					(errcode(ERRCODE_SYSTEM_ERROR),
-					 errmsg("error writing file \"%s\": %m", path)));
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("error writing file \"%s\": %m", path)));
 
 	pfree(path);
 
@@ -283,63 +288,140 @@ void cg_write_string(int controller, char * const cgroup, char * const parameter
 }
 
 /*
- * Add the postmaster to a Linux control group for all controllers.
+ * Read a control group parameter.
+ * Returns a palloc'ed value.
  */
-void cg_move_postmaster(char * const cgroup, bool silent)
+char *
+cg_read_string(int controller, char * const cgroup, char * const parameter)
+{
+	char *result = NULL, *path, buf[1000];
+	ssize_t bytes, total = 0;
+	int fd;
+
+	path = palloc(strlen(cgctl[controller].mountpoint)
+				  + strlen(cgroup)
+				  + strlen(parameter) + 3);
+	sprintf(path,
+			"%s/%s/%s",
+			cgctl[controller].mountpoint, cgroup, parameter);
+
+	errno = 0;
+
+	fd = OpenTransientFile(path, O_RDONLY | O_TRUNC);
+
+	if (fd == -1)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("error opening file \"%s\" for reading: %m", path)));
+
+	while ((bytes = read(fd, buf, 1000)) > 0)
+	{
+		total += bytes;
+
+		if (result)
+			result = repalloc(result, total + 1);
+		else
+		{
+			result = palloc(total + 1);
+			result[0] = '\0';
+		}
+
+		strncat(result, buf, bytes);
+	}
+	if (errno)
+		ereport(ERROR,
+				(errcode(ERRCODE_SYSTEM_ERROR),
+				 errmsg("error reading file \"%s\": %m", path)));
+
+	pfree(path);
+
+	CloseTransientFile(fd);
+
+	return result;
+}
+
+/*
+ * Add the processes to a Linux control group for all controllers.
+ * "processes" contains the process IDs, separated by comma.
+ * If "silent", ignore errors.
+ */
+void
+cg_move_process(char * const cgroup, char * const process, bool silent)
 {
 	int i, fd;
-	char *path, pid_s[30];
-
-	/* no process ID can be longer than 29 digits */
-	snprintf(pid_s, 30, "%d\n", postmaster_pid);
+	char *path;
 
 	for (i=0; i<MAX_CONTROLLERS; ++i)
 	{
-		path = palloc(strlen(cgctl[i].mountpoint) + 23);
+		path = palloc(strlen(cgctl[i].mountpoint) + 30);
 		sprintf(path, "%s/%s/tasks", cgctl[i].mountpoint, cgroup);
 
 		fd = OpenTransientFile(path, O_WRONLY);
 
-		pfree(path);
-
 		if (fd == -1)
 		{
 			if (silent)
-				return;
+			{
+				CloseTransientFile(fd);
+				continue;
+			}
 
 			ereport(ERROR,
 					(errcode(ERRCODE_SYSTEM_ERROR),
 					 errmsg("cannot open \"%s\" for writing: %m", path)));
 		}
 
-		if (write(fd, pid_s, strlen(pid_s)) < 0)
+		if (write(fd, process, strlen(process) + 1) < 0)
 		{
 			if (silent)
-				return;
+			{
+				CloseTransientFile(fd);
+				continue;
+			}
 
 			ereport(ERROR,
 					(errcode(ERRCODE_SYSTEM_ERROR),
 					 errmsg("error writing file \"%s\": %m", path)));
 		}
 
+		pfree(path);
+
 		CloseTransientFile(fd);
 	}
 }
 
-void on_exit_callback(int code, Datum arg)
+void
+on_exit_callback(int code, Datum arg)
 {
 	int i;
-	char *path;
+	char *path, *processes, *p, *q;
 
-	/* move the postmaster to the /postgres cgroup */
-	cg_move_postmaster("postgres", true);
+	/* "postmaster_pid" is shorter than 30 digits */
+	path = palloc(40);
+	sprintf(path, "postgres/%d", postmaster_pid);
+	processes = cg_read_string(CONTROLLER_MEMORY, path, "tasks");
+	pfree(path);
 
+	/* we have to move the processes out of the control groups one by one */
+	p = processes;
+	while (*p != '\0')
+	{
+		q = strchr(p, '\n');
+		*q = '\0';
+		cg_move_process("postgres", p, true);
+		p = q + 1;
+	}
+
+	pfree(processes);
+
+	/* remove the control groups */
 	for (i=0; i<MAX_CONTROLLERS; ++i)
 	{
 		/* "postmaster_pid" is shorter than 30 digits */
 		path = palloc(strlen(cgctl[i].mountpoint) + 40);
 		sprintf(path, "%s/postgres/%d", cgctl[i].mountpoint, postmaster_pid);
 		(void) rmdir(path);
+		pfree(path);
 	}
 }
 
@@ -354,13 +436,17 @@ void on_exit_callback(int code, Datum arg)
  * - create a cgroup for this PostgreSQL instance
  * - move the instance to that cgroup
  * - register an "atexit" callback that will remove the cgroup at postmaster exit
+ * - define the custom GUCs
  */
-void cg_init(void)
+void
+cg_init(void)
 {
-	char *path, *cgroup;
+	char *path, *cgroup, pid_s[30];
 	int i;
 
 	postmaster_pid = getpid();
+	/* no process ID can be longer than 30 digits */
+	snprintf(pid_s, 30, "%d", postmaster_pid);
 
 	/* check that all required cgroup controllers are present */
 	check_controllers();
@@ -405,13 +491,13 @@ void cg_init(void)
 	cg_write_string(CONTROLLER_CPU, cgroup, "cpu.cfs_period_us", "100000");
 
 	/* add the postmaster to the newly created cgroups */
-	for (i=0; i<MAX_CONTROLLERS; ++i)
-		cg_move_postmaster(cgroup, false);
+	cg_move_process(cgroup, pid_s, false);
 
 	pfree(cgroup);
 }
 
-void cg_set_string(int controller, char * const parameter, char * const value)
+void
+cg_set_string(int controller, char * const parameter, char * const value)
 {
 	char cgroup[40];
 
@@ -421,7 +507,8 @@ void cg_set_string(int controller, char * const parameter, char * const value)
 	cg_write_string(controller, cgroup, parameter, value);
 }
 
-void cg_set_int64(int controller, char * const parameter, int64_t value)
+void
+cg_set_int64(int controller, char * const parameter, int64_t value)
 {
 	char str[25];	/* long enough for an int64 */
 
@@ -431,12 +518,14 @@ void cg_set_int64(int controller, char * const parameter, int64_t value)
 }
 
 /* getter functions for the default values */
-char * const get_def_cpus(void)
+char
+* const get_def_cpus(void)
 {
 	return def_cpus;
 }
 
-char * const get_def_memory_nodes(void)
+char *
+const get_def_memory_nodes(void)
 {
 	return def_memory_nodes;
 }
