@@ -203,14 +203,6 @@ CPU parameters
   To allow PostgreSQL to use more than one CPU fully, set the parameter to
   a value greater than 100000.
 
-Diagnostic parameter
---------------------
-
-- `pg_cgroups.version` (type `text`)
-
-  This parameter shows the current version of `pg_cgroups` and can only
-  be read.
-
 NUMA parameters
 ---------------
 
@@ -236,6 +228,14 @@ numbers or number ranges, like `0`, `0-3` or `4,7-9`.
   CPUs that PostgreSQL can use.
 
  [1]: https://en.wikipedia.org/wiki/Non-uniform_memory_access
+
+Diagnostic parameter
+--------------------
+
+- `pg_cgroups.version` (type `text`)
+
+  This parameter shows the current version of `pg_cgroups` and can only
+  be read.
 
 Support
 =======
