@@ -126,6 +126,10 @@ Memory parameters
   Once `memory_limit` plus `swap_limit` is exhausted, the `oom_killer`
   parameter determines what will happen.
 
+  **Note:** if the kernel was configured without `CONFIG_MEMCG_SWAP_ENABLED`,
+  `memory.memsw.limit_in_bytes` is not available and this parameter has no
+  effect.
+
 - `pg_cgroups.oom_killer` (type `boolean`, default value `on`)
 
   This parameter configures what will happen if the limit on memory and swap

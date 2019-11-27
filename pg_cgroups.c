@@ -36,6 +36,7 @@ static char* cpus = NULL;	/* set during module initialization */
 static char* memory_nodes = NULL;	/* set during module initialization */
 
 /* other static variables */
+static bool cgroup_has_swap_param = false;  /* set during module initialization */
 static int max_cpu_share = -1;	/* set during module initialization */
 
 /* static functions declarations */
@@ -69,7 +70,7 @@ _PG_init(void)
 				 errmsg("\"pg_cgroups\" must be added to \"shared_preload_libraries\"")));
 
 	/* initialize cgroups library and set get GUC defaults */
-	cg_init();
+	cg_init(&cgroup_has_swap_param);
 
 	/* set a default value (and upper limit) for cpu_share */
 	if (!parse_online(get_def_cpus(), &dummy, &num_cpus))
@@ -261,14 +262,16 @@ memory_limit_assign(int newval, void *extra)
 		|| (newval > memory_limit && memory_limit != -1))
 	{
 		/* we have to raise the limit on memory + swap first */
-		cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
+		if (cgroup_has_swap_param)
+			cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
 		cg_set_int64(CONTROLLER_MEMORY, "memory.limit_in_bytes", mem_value);
 	}
 	else
 	{
 		/* we have to lower the limit on memory + swap last */
 		cg_set_int64(CONTROLLER_MEMORY, "memory.limit_in_bytes", mem_value);
-		cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
+		if (cgroup_has_swap_param)
+			cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
 	}
 }
 
@@ -293,7 +296,8 @@ swap_limit_assign(int newval, void *extra)
 	/* convert from MB to bytes */
 	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
-	cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
+	if (cgroup_has_swap_param)
+		cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
 }
 
 void

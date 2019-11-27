@@ -12,7 +12,7 @@
 extern void _PG_init(void);
 
 /* defined in libcg1.c */
-extern void cg_init(void);
+extern void cg_init(bool *cgroup_has_swap_param);
 extern char * const get_def_cpus(void);
 extern char * const get_def_memory_nodes(void);
 extern void cg_set_string(int controller, char * const parameter, char * const value);

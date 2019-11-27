@@ -51,7 +51,7 @@ static void check_controllers(void);
 static void get_mountpoints(void);
 static char * const get_online(char * const what);
 static void cg_write_string(int controller, char * const cgroup, char * const parameter, char * const value);
-static char *cg_read_string(int controller, char * const cgroup, char * const parameter);
+static char *cg_read_string(int controller, char * const cgroup, char * const parameter, bool ignore_errors);
 static void cg_move_process(char * const cgroup, char * const process, bool silent);
 static void on_exit_callback(int code, Datum arg);
 
@@ -290,9 +290,10 @@ cg_write_string(int controller, char * const cgroup, char * const parameter, cha
 /*
  * Read a control group parameter.
  * Returns a palloc'ed value.
+ * If "ignore_errors" is "true", the function returns NULL if it encounters errors.
  */
 char *
-cg_read_string(int controller, char * const cgroup, char * const parameter)
+cg_read_string(int controller, char * const cgroup, char * const parameter, bool ignore_errors)
 {
 	char *result = NULL, *path, buf[1000];
 	ssize_t bytes, total = 0;
@@ -399,7 +400,7 @@ on_exit_callback(int code, Datum arg)
 	/* "postmaster_pid" is shorter than 30 digits */
 	path = palloc(40);
 	sprintf(path, "postgres/%d", postmaster_pid);
-	processes = cg_read_string(CONTROLLER_MEMORY, path, "tasks");
+	processes = cg_read_string(CONTROLLER_MEMORY, path, "tasks", false);
 	pfree(path);
 
 	/* we have to move the processes out of the control groups one by one */
@@ -437,11 +438,12 @@ on_exit_callback(int code, Datum arg)
  * - move the instance to that cgroup
  * - register an "atexit" callback that will remove the cgroup at postmaster exit
  * - define the custom GUCs
+ * - find out (and return) if the kernel has "memory.memsw.limit_in_bytes"
  */
 void
-cg_init(void)
+cg_init(bool *cgroup_has_swap_param)
 {
-	char *path, *cgroup, pid_s[30];
+	char *path, *cgroup, pid_s[30], *memsw;
 	int i;
 
 	postmaster_pid = getpid();
@@ -489,6 +491,20 @@ cg_init(void)
 
 	/* set "cpu.cfs_period_us" to 100000 */
 	cg_write_string(CONTROLLER_CPU, cgroup, "cpu.cfs_period_us", "100000");
+
+	/*
+	 * On kernels configured without CONFIG_MEMCG_SWAP_ENABLED,
+	 * the "memory.memsw.limit_in_bytes" parameter is not available.
+	 * Find out by trying to read the parameter.
+	 */
+	memsw = cg_read_string(CONTROLLER_MEMORY, "postgres", "memory.memsw.limit_in_bytes", true);
+	if (memsw)
+	{
+		*cgroup_has_swap_param = true;
+		pfree(memsw);
+	}
+	else
+		*cgroup_has_swap_param = false;
 
 	/* add the postmaster to the newly created cgroups */
 	cg_move_process(cgroup, pid_s, false);
