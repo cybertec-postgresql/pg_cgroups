@@ -94,20 +94,21 @@ _PG_init(void)
 		NULL
 	);
 
-	DefineCustomIntVariable(
-		"pg_cgroups.swap_limit",
-		"Limit the swap space available to this cluster.",
-		"This corresponds to \"memory.memsw.limit_in_bytes\" minus \"memory.limit_in_bytes\".",
-		&swap_limit,
-		-1,
-		-1,
-		INT_MAX / 2,
-		PGC_SIGHUP,
-		GUC_UNIT_MB,
-		NULL,
-		swap_limit_assign,
-		NULL
-	);
+	if (cgroup_has_swap_param)
+		DefineCustomIntVariable(
+			"pg_cgroups.swap_limit",
+			"Limit the swap space available to this cluster.",
+			"This corresponds to \"memory.memsw.limit_in_bytes\" minus \"memory.limit_in_bytes\".",
+			&swap_limit,
+			-1,
+			-1,
+			INT_MAX / 2,
+			PGC_SIGHUP,
+			GUC_UNIT_MB,
+			NULL,
+			swap_limit_assign,
+			NULL
+		);
 
 	DefineCustomBoolVariable(
 		"pg_cgroups.oom_killer",
@@ -280,6 +281,8 @@ swap_limit_assign(int newval, void *extra)
 {
 	int64_t swap_value, newtotal;
 
+	Assert(cgroup_has_swap_param);
+
 	/* only the postmaster changes the kernel */
 	if (MyProcPid != PostmasterPid)
 		return;
@@ -296,8 +299,7 @@ swap_limit_assign(int newval, void *extra)
 	/* convert from MB to bytes */
 	swap_value = (newtotal == -1) ? -1 : newtotal * 1048576;
 
-	if (cgroup_has_swap_param)
-		cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
+	cg_set_int64(CONTROLLER_MEMORY, "memory.memsw.limit_in_bytes", swap_value);
 }
 
 void
