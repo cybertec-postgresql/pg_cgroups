@@ -311,9 +311,14 @@ cg_read_string(int controller, char * const cgroup, char * const parameter, bool
 	fd = OpenTransientFile(path, O_RDONLY | O_TRUNC);
 
 	if (fd == -1)
-		ereport(ERROR,
-				(errcode(ERRCODE_SYSTEM_ERROR),
-				 errmsg("error opening file \"%s\" for reading: %m", path)));
+	{
+		if (ignore_errors)
+			return NULL;
+		else
+			ereport(ERROR,
+					(errcode(ERRCODE_SYSTEM_ERROR),
+					 errmsg("error opening file \"%s\" for reading: %m", path)));
+	}
 
 	while ((bytes = read(fd, buf, 1000)) > 0)
 	{
