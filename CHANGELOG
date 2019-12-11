@@ -1,1 +1,19 @@
+Release 0.9.1
+
+Bugfixes:
+
+- Fix operation on kernels without `CONFIG_MEMCG_SWAP_ENABLED`.
+  Newer Debian kernels are configured like that, and on such kernels
+  `memory.memsw.limit_in_bytes` does not exist, which caused pg_cgroups
+  to fail during startup with the error
+
+        cannot access '/sys/fs/cgroup/memory/init.scope/memory.memsw.limit_in_bytes': No such file or directory
+
+  Fix by not defining `pg_cgroups.swap_limit` on such systems.
+
+  Bug reported by Jens Wilke in #1.
+
+- Fix building on PostgreSQL v10.
+  `OpenTransientFile` had a third argument back then.
+
 Release 0.9.0  (2019-04-28)

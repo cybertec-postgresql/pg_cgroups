@@ -21,6 +21,15 @@
 
 #include "pg_cgroups.h"
 
+/* v11 did away with the third parameter of OpenTransientFile */
+#if PG_VERSION_NUM < 110000
+#define OpenTransFile(filename, fileflags) \
+		OpenTransientFile((filename), (fileflags), S_IRUSR | S_IWUSR)
+#else
+#define OpenTransFile(filename, fileflags) \
+		OpenTransientFile((filename), (fileflags))
+#endif  /* PG_VERSION_NUM */
+
 /*
  * static variables
  */
@@ -210,7 +219,7 @@ const get_online(char * const what)
 
 	errno = 0;
 
-	fd = OpenTransientFile(path, O_RDONLY);
+	fd = OpenTransFile(path, O_RDONLY);
 
 	pfree(path);
 
@@ -265,7 +274,7 @@ cg_write_string(int controller, char * const cgroup, char * const parameter, cha
 
 	errno = 0;
 
-	fd = OpenTransientFile(path, O_WRONLY | O_TRUNC);
+	fd = OpenTransFile(path, O_WRONLY | O_TRUNC);
 
 	if (fd == -1)
 		ereport(ERROR,
@@ -308,7 +317,7 @@ cg_read_string(int controller, char * const cgroup, char * const parameter, bool
 
 	errno = 0;
 
-	fd = OpenTransientFile(path, O_RDONLY | O_TRUNC);
+	fd = OpenTransFile(path, O_RDONLY | O_TRUNC);
 
 	if (fd == -1)
 	{
@@ -362,7 +371,7 @@ cg_move_process(char * const cgroup, char * const process, bool silent)
 		path = palloc(strlen(cgctl[i].mountpoint) + 30);
 		sprintf(path, "%s/%s/tasks", cgctl[i].mountpoint, cgroup);
 
-		fd = OpenTransientFile(path, O_WRONLY);
+		fd = OpenTransFile(path, O_WRONLY);
 
 		if (fd == -1)
 		{

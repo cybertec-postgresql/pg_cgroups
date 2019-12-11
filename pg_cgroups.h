@@ -1,4 +1,4 @@
-#define PG_CGROUPS_VERSION "pg_cgroups version 0.9.0"
+#define PG_CGROUPS_VERSION "pg_cgroups version 0.9.1devel"
 
 /* cgroup controllers we use */
 #define MAX_CONTROLLERS 4
