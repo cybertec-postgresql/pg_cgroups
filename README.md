@@ -248,7 +248,7 @@ You can
 on Github if you have questions or problems.
 
 For professional support, contact
-[Cybertec](https://www.cybertec-postgresql.com).
+[CYBERTEC PostgreSQL International GmbH](https://www.cybertec-postgresql.com).
 
 Make sure you report which version you are using.
 The version can be found with this SQL command:
